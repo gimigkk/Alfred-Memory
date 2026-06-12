@@ -490,6 +490,14 @@ To ensure disk I/O never blocks database transactions or webhook responses:
 
 ## 13. Open Questions
 
+### ⚫ Critical Priority
+
+**Q1: Missing Content Field on Node Types**
+Most node types currently only have structured metadata fields with no free-form content field where the actual substance of the memory lives. Every node likely needs a `content STRING` or consistent `summary STRING` field that holds the narrative and context. The current schema is too restrictive without it.
+
+**Q2: Memory Update & Modification Flow**
+The spec describes how nodes get created but not how they get updated when new information contradicts or extends existing memory. Undecided: when the extraction pipeline finds information relating to an existing node, does it overwrite, append, or version? Who writes to `change_history` — the agent during extraction or the user manually? What is the exact PWA mechanism for user corrections (Q2)? What happens to both nodes' content when Nightwatch merges two duplicates via the Memory Review Inbox?
+
 ### 🔴 High Priority
 
 **Q1: Ingestion Queue Architecture**
@@ -500,10 +508,10 @@ How does the user correct Alfred when it extracts something wrong? The agent may
 
 ### 🟡 Low Priority / Future
 
-**Q3: Off-Site Backup Strategy**
+**Q1: Off-Site Backup Strategy**
 LadybugDB and SQLite are both single files on the VPS. If the VPS dies, all memory is lost. A scheduled backup strategy is needed — candidates: rsync to another machine, or push to object storage (Backblaze B2 or Cloudflare R2). Not important for prototype phase.
 
-**Q4: Multi-Source Architecture**
+**Q2: Multi-Source Architecture**
 How do future ingestion sources (Telegram, Email) plug in without rewriting the ingestion layer? Likely a source-agnostic message interface that WAHA and future adapters all conform to. Not a near-future priority.
 
 ---
