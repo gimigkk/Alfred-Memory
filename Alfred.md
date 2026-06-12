@@ -1,181 +1,219 @@
-## Agentic Secretary AI — Full Project Specification
+# Alfred — Agentic Secretary AI
+### Project Specification
 
-> **Status:** Planning / Pre-development  
-> **Last updated from chat:** June 12, 2026  
-> **Stack:** WAHA (GOWS), Flutter, Budget VPS (4GB RAM / 8GB storage), Golang Backend, Groq API + open-weight LLM fallback, LadybugDB (embedded graph DB)
+> **Status:** Planning / Pre-development
+> **Last updated:** June 13, 2026
+> **Stack:** Golang Backend · LadybugDB · SQLite · Groq API · WAHA (GOWS) · PWA Frontend · Ubuntu 24.04 VPS (4GB RAM / 8GB Storage)
 
 ---
 
 ## Table of Contents
 
-1. [Project Vision](#1-project-vision)
-2. [System Architecture Overview](#2-system-architecture-overview)
-3. [The "Alfred" Point of View (Persona)](#3-the-alfred-point-of-view-persona)
-4. [Ingestion Layer (WAHA / WhatsApp)](#4-ingestion-layer)
+1. [Vision & Scope](#1-vision--scope)
+2. [System Overview](#2-system-overview)
+3. [The Alfred Persona](#3-the-alfred-persona)
+4. [Ingestion Layer](#4-ingestion-layer)
 5. [Conversation Block System](#5-conversation-block-system)
-6. [Memory Vault — Graph Database](#6-memory-vault--graph-database)
-7. [Memory Node Schema & Templates](#7-memory-node-schema--templates)
-8. [Agentic Tooling System (The Traversal Loop)](#8-agentic-tooling-system)
-9. [LLM Extraction Pipeline](#9-llm-extraction-pipeline)
-10. [Storage & Purging Strategy](#10-storage--purging-strategy)
-11. [Chat Interface & Observability Layer](#11-chat-interface--observability-layer)
-12. [Infrastructure & Stack Decisions](#12-infrastructure--stack-decisions)
-13. [Open Questions & Undiscussed Aspects](#13-open-questions--undiscussed-aspects)
+6. [LLM Extraction Pipeline](#6-llm-extraction-pipeline)
+7. [Memory Vault](#7-memory-vault)
+8. [Agentic Query System](#8-agentic-query-system)
+9. [Reminder System](#9-reminder-system)
+10. [Background Agents](#10-background-agents)
+11. [PWA Interface](#11-pwa-interface)
+12. [Infrastructure](#12-infrastructure)
+13. [Open Questions](#13-open-questions)
 14. [Decision Log](#14-decision-log)
 
 ---
 
-## 1. Project Vision
+## 1. Vision & Scope
 
-An **agentic secretary AI** that passively watches your conversations — starting with WhatsApp — and turns raw chat into a **living, temporal memory system**. It is not a chat archive. It is a structured knowledge graph that grows over time and can be queried naturally.
+Alfred is an **agentic secretary AI** that passively watches your conversations — starting with WhatsApp — and turns raw chat into a **living, temporal memory system**. It is not a chat archive. It is a structured knowledge graph that grows over time and can be queried naturally.
 
-The final product should be able to:
+### What Alfred Does
 - **Remember** — extract and store structured facts, tasks, events, preferences, people, experiences, and social insights
 - **Forget intentionally** — raw chat is ephemeral; only curated memory is permanent
 - **Summarize** — compress conversation blocks into semantic summaries
 - **Merge duplicates** — resolve conflicts between overlapping pieces of information
 - **Detect stale info** — flag or update outdated beliefs/states while maintaining historical lineage
-- **Track changes over time** — store not just the current state, but the history of how it got there (temporal dynamics)
+- **Track changes over time** — store not just the current state, but the history of how it got there
+- **Remind proactively** — surface upcoming deadlines and obligations without being asked
 - **Explain its reasoning** — all agent actions, tool calls, and traversal steps are visible and auditable
 
-**The analogy:** It works like a personal knowledge base managed by a secretary who reads every conversation, takes smart notes, and knows how to answer your questions without you having to dig through old messages.
+### Analogy
+A personal knowledge base managed by a secretary who reads every conversation, takes smart notes, and knows how to answer your questions without you having to dig through old messages.
+
+### Current Scope
+- **Single user** (multi-user architecture planned post-validation)
+- **Two WhatsApp group chats** as the initial data sources
+- **Personal VPS** deployment, zero cloud spend
 
 ---
 
-## 2. System Architecture Overview
+## 2. System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        DATA SOURCES                         │
-│              WhatsApp (via WAHA / GOWS webhooks)            │
-│                  (future: Telegram, Email...)                │
+│                      DATA SOURCES                           │
+│           WhatsApp (via WAHA / GOWS webhooks)               │
+│               (future: Telegram, Email...)                  │
 └────────────────────────────┬────────────────────────────────┘
-                             │ Raw messages (webhook) + Auth Token
+                             │
+            Raw messages (webhook) + Auth Token
+                             │ 
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   INGESTION & BLOCKING                       │
-│   Debounced conversation block builder                       │
-│   Block status: open → committed → abandoned                 │
+│                   INGESTION & BLOCKING                      │
+│   Debounced conversation block builder                      │
+│   Block status: open → committed → abandoned                │
 │   Rolling 30-day raw message buffer (then purged)           │
-│   *CRITICAL: Pause cleanup jobs immediately on new webhook   │
+│   *CRITICAL: Pause cleanup jobs immediately on new webhook  │
 └────────────────────────────┬────────────────────────────────┘
-                             │ Committed conversation block
+                             │
+                Committed conversation block
+                             │ 
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  LLM EXTRACTION PIPELINE                     │
-│   Groq (primary) → open-weight fallback                      │
-│   Extracts: Tasks, Events, Insights, People,                 │
-│             Quotes, Relationships, Deadlines                  │
-│   Flags quote-worthy text (stored verbatim)                  │
+│                  LLM EXTRACTION PIPELINE                    │
+│   Groq (primary) → open-weight fallback chain               │
+│   Extracts: Tasks, Events, Insights, People,                │
+│             Quotes, Relationships, Deadlines                │
+│   Flags quote-worthy text (stored verbatim)                 │
 └────────────────────────────┬────────────────────────────────┘
-                             │ Structured memory events
+                             │
+                  Structured memory events
+                             │ 
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                     MEMORY VAULT                             │
-│   LadybugDB (C++ embedded graph DB via go-ladybug)           │
-│   Core node types: Person, Event, Task, Insight,             │
-│   ConversationBlock                                          │
+│                     MEMORY VAULT                            │
+│   LadybugDB (C++ embedded graph DB via go-ladybug)          │
+│   Core node types: Person, Event, Task, Insight,            │
+│   ConversationBlock                                         │
 │   Human-readable views: Markdown files per node             │
 │   Async disk writes offloaded to buffered Go channels       │
 └────────────────────────────┬────────────────────────────────┘
-                             │ Tool-callable memory interface
+                             │
+               Tool-callable memory interface
+                             │ 
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              AGENTIC TOOLING LAYER (TRAVERSAL)              │
 │   Custom tools: search_nodes, get_surrounding_graph,        │
-│                 read_nodes, ask_user_for_hint                │
-│   LLM decides which tools to call; Go backend executes       │
+│                 read_nodes, ask_user_for_hint,              │
+│                 check_reminders, upsert_reminder            │
+│   LLM decides which tools to call; Go backend executes      │
 │   Uses dynamic stamina (base 2-3) + hard cap (5-6)          │
 └────────────────────────────┬────────────────────────────────┘
                              │
               ┌──────────────┴──────────────┐
               ▼                             ▼
-┌─────────────────────┐       ┌─────────────────────────────┐
-│   CHAT INTERFACE    │       │  AGENT PROCESS VIEW          │
-│   Flutter app       │       │  (Observability / Audit)     │
-│   Natural language  │       │  Live agent reasoning        │
-│   Q&A with memory  │       │  What was extracted, why     │
-└─────────────────────┘       └─────────────────────────────┘
+ ┌──────────────────────┐       ┌────────────────────────────┐
+ │   CHAT INTERFACE     │       │  AGENT PROCESS VIEW        │
+ │   PWA                │       │  (Observability / Audit)   │
+ │   Natural language   │       │  Live agent reasoning      │
+ │   Q&A with memory    │       │  What was extracted, why   │
+ └──────────────────────┘       └────────────────────────────┘
 ```
+
+### Data Flow Summary
+1. WhatsApp messages arrive via WAHA webhook → buffered into open conversation blocks
+2. After a silence window, the block is committed → sent to the LLM extraction pipeline
+3. The LLM extracts structured nodes (people, tasks, events, insights) → written to LadybugDB
+4. The agent also writes reminder rows to SQLite for any deadline-bearing tasks
+5. The user queries Alfred via the PWA chat → the agent traverses the graph using tools
+6. A dumb cron job scans SQLite and fires push notifications for upcoming reminders
+7. Nightwatch (background agent) runs nightly to merge duplicates and flag stale data
 
 ---
 
-## 3. The "Alfred" Point of View (Persona)
+## 3. The Alfred Persona
 
-Every piece of information processed, summarized, or recalled by the system is filtered through a highly specific, strictly defined system perspective. Instead of falling back on bubbly, over-polite, or preachy default assistant personalities, the AI strictly adopts the **"Loyal, Discreet Secretary" (The Alfred Pennyworth Persona)** [34].
+Every piece of information processed, summarized, or recalled by the system is filtered through a strictly defined perspective: the **"Loyal, Discreet Secretary" (The Alfred Pennyworth Persona)**.
+
+Instead of falling back on bubbly, over-polite, or preachy default assistant personalities, Alfred operates on three pillars:
 
 ### Pillar 1: Strict Loyalty (Ego-Centric Bias)
-The AI is not an impartial observer; it works exclusively for **you** [34]. 
-*   The center of the database universe is always "You." 
-*   If a contact is hostile or demanding toward you, the memory is framed relative to your interests. (e.g. Instead of *"User and Rezonaldo had a disagreement,"* it records *"Rezonaldo was uncooperative regarding your task request"*).
-*   Every task, commitment, preference, and insight is mapped to support your schedule, your peace of mind, and your goals.
+Alfred works exclusively for **you**. The center of the database universe is always "You."
+- If a contact is hostile or demanding toward you, the memory is framed relative to your interests. Instead of *"User and Bahlil had a disagreement,"* it records *"Bahlil was uncooperative regarding your task request."*
+- Every task, commitment, preference, and insight is mapped to support your schedule, your peace of mind, and your goals.
 
 ### Pillar 2: High Observational Attunement (No "Therapist-Speak")
-The AI must document social situations like a highly skilled, silent observer in the room. It documents verifiable **behaviors** and **stated truths**, never speculative internal feelings [34].
-*   **Bad (Therapist POV):** *"Naurah was feeling anxious and unsupported by Rezonaldo's lack of validation."* (Hallucinated emotion/motive).
-*   **Good (Alfred POV):** *"Naurah expressed worry about her DPP preparation. She noted frustration regarding Rezonaldo's missed presentation deadline."* (Objective, empirical observation of text).
+Alfred documents social situations like a skilled, silent observer. It documents verifiable **behaviors** and **stated truths**, never speculative internal feelings.
+- **Bad (Therapist POV):** *"Bunga was feeling anxious and unsupported by Bahlil's lack of validation."* (Hallucinated emotion/motive)
+- **Good (Alfred POV):** *"Bunga expressed worry about her DPP preparation. She noted frustration regarding Bahlil's missed presentation deadline."* (Objective, empirical observation of text)
 
 ### Pillar 3: Dry, Understated, and Professional Tone
-The interface respects your time and tokens. It communicates with professional brevity [34].
-*   **Example Interaction:**
-    *   *You:* *"Did I promise to do anything for Rezonaldo?"*
-    *   *Alfred Persona:* *"Yes. On Friday, you committed to sending him the DPP slides. It is currently uncompleted."*
-*   **Benefits:** This dry tone ensures extracted summaries are incredibly compact (reducing database token bloat by up to 70%), highly readable, and free of conversational fluff.
+Alfred communicates with professional brevity. This dry tone ensures extracted summaries are compact (reducing database token bloat by up to 70%), highly readable, and free of conversational fluff.
+- *You: "Did I promise to do anything for Bahlil?"*
+- *Alfred: "Yes. On Friday, you committed to sending him the DPP slides. It is currently uncompleted."*
 
 ---
 
 ## 4. Ingestion Layer
 
 ### Source: WAHA (GOWS Webhooks)
-- **Decided:** Use WAHA with GOWS (Go WebSocket server) as the WhatsApp ingestion mechanism.
-- WAHA sends incoming messages to the backend via webhooks.
-- **Webhook Security:** To prevent raw internet crawlers or malicious payloads from polluting your memory vault, the Go backend enforces strict token-based validation (using a shared secret Basic Auth or Bearer Header) before processing any WAHA webhook payloads [32].
-- **Race Condition Prevention:** To avoid data hazards and database locks, any active memory cleanup agent or background indexing job must be immediately paused the instant a new webhook message arrives. Ingestion and extraction have strict priority [26].
+WhatsApp messages are ingested via WAHA with GOWS (Go WebSocket server). WAHA sends incoming messages to the Go backend via webhooks.
+
+**Webhook Security:** The Go backend enforces strict token-based validation (Bearer Header) before processing any WAHA webhook payload, preventing raw internet crawlers or malicious payloads from polluting the memory vault.
+
+**Race Condition Prevention:** Any active background job (Nightwatch cleanup, indexing) must be immediately paused the instant a new webhook message arrives. Ingestion and extraction have strict priority over all background work. See Q1.
 
 ### Message Attribution: "Me" vs "Others"
-WAHA's webhook payload includes a `fromMe: true | false` boolean on every message — this is the system's ground-truth signal for distinguishing "things said by me" from "things said to me." It's set per-message at ingestion, not inferred by the LLM.
+WAHA's webhook payload includes a `fromMe: true | false` boolean on every message — this is the ground-truth signal for distinguishing messages sent by the owner vs messages sent by contacts. It is set at ingestion, not inferred by the LLM.
 
-- `fromMe: true` → the message belongs to the owner (the single user this system is built for)
-- `fromMe: false` → the message belongs to a contact
-
-**Singleton "self" Person node:** Reserve a fixed `Person` node (e.g. `name: "me"`, `is_self: true`) that all `fromMe: true` messages map to. This anchors task/commitment attribution without per-conversation guesswork.
+A fixed **singleton "self" Person node** (`name: "me"`, `is_self: true`) anchors all `fromMe: true` messages. This ensures task and commitment attribution is unambiguous without per-conversation guesswork.
 
 ---
 
 ## 5. Conversation Block System
 
-The conversation block is the **fundamental unit of processing** — analogous to a Git commit. The AI never processes individual messages; it always works on committed blocks.
+The conversation block is the **fundamental unit of processing** — analogous to a Git commit. Alfred never processes individual messages in isolation; it always works on committed blocks.
 
 ### Block Lifecycle
-- **Buffer:** Messages are accumulated while a conversation is active.
-- **Debounce:** Commits the block after a silence threshold (15-30 minutes of no messages) or when a hard topic shift is detected.
-- **Unfinished Blocks:** If a block is interrupted mid-conversation, it is marked as `status: open`. If a continuation arrives later, it is merged or linked. Unfinished blocks default to `status: abandoned` after a max-age threshold.
+- **Buffer:** Messages accumulate while a conversation is active.
+- **Debounce:** The block commits after a silence threshold (15-30 minutes of no messages) or when a hard topic shift is detected.
+- **Open:** A block that has been started but not yet committed.
+- **Committed:** A fully sealed block ready for LLM extraction.
+- **Abandoned:** A block that was interrupted and never naturally closed. Defaulted after a max-age threshold. On Day 30, any open block reaching the purge window gets a final LLM sweep before raw deletion (see Section 10).
 
 ---
 
-## 6. Memory Vault — Graph Database
+## 6. LLM Extraction Pipeline
 
-### Database Choice: LadybugDB (Embedded C++ Graph Engine)
-Following the October 2025 acquisition of Kùzu Inc. by Apple and the subsequent archiving of the Kuzu repository, this project utilizes **LadybugDB**—the direct open-source community successor [30]. It runs **in-process** inside the compiled Go binary using CGO bindings (`go-ladybug`), maintaining an ultra-lightweight memory footprint perfect for a 4GB VPS [31].
+### Trigger
+When a conversation block is committed, the extraction pipeline reads the transcript and creates, links, or updates nodes in LadybugDB according to the schema.
 
-### Identity Resolution at Ingestion (Bypassing the `@lid` Bug)
-Raw WhatsApp IDs (JIDs) mutate and rotate dynamically across different clients, making them terrible database primary keys. 
-*   `Person.id` is a **generated stable UUID string** [29].
-*   Incoming messages are resolved to existing `Person` nodes using fuzzy/semantic matching on `name`, `aliases`, and normalized `phone_number` properties [29].
+### Language Boundaries
+- **Storage (Database properties / Markdown):** Stored explicitly in **Indonesian**. This matches the vocabulary of real messages, ensuring keyword searches (BM25) and fuzzy lookups match naturally without losing semantic nuance in translation.
+- **Reasoning (Agent Logic):** Done strictly in **English**. The LLM uses English for its internal monologue (`inner_thoughts`), tool selection, and structure-parsing, as LLMs have significantly stronger logical capabilities on English-trained data.
 
-### Core Ontology (Schema Definitions)
-The ontology is designed to balance relational structure (accuracy) with qualitative flexibility. We avoid rigid buckets that choke human memory traits, shared experiences, and deep emotional dynamics. 
+### LLM Fallback Chain
+Groq is the primary inference provider. If a call fails, the system walks down a prioritized list of fallback model APIs in a try/catch loop until one succeeds.
 
-To achieve this, we use an **`Insight`** table to capture vibes, traits, and shared memories, and we utilize **Polymorphic Relationships** in the schema [24, 25].
+### Prompt Caching
+Alfred's system prompt is long and resent on every API call — including every turn of the agentic traversal loop (up to 5-6 turns per query). Groq's prompt caching halves input token costs on repeated prompt prefixes and does not count cached tokens toward rate limits. Prompt caching must be enabled on all extraction and traversal calls.
 
-#### Node Tables (LadybugDB DDL)
+---
+
+## 7. Memory Vault
+
+### Database: LadybugDB
+Following the October 2025 acquisition of Kùzu Inc. by Apple and the subsequent archiving of the Kuzu repository, this project uses **LadybugDB** — the direct open-source community successor. It runs **in-process** inside the compiled Go binary via CGO bindings (`go-ladybug`), maintaining an ultra-lightweight memory footprint suitable for a 4GB VPS.
+
+### Identity Resolution (Bypassing the `@lid` Bug)
+Raw WhatsApp JIDs mutate and rotate dynamically across different clients, making them unreliable as database keys.
+- `Person.id` is a **generated stable UUID**.
+- Incoming messages are resolved to existing `Person` nodes using fuzzy/semantic matching on `name`, `aliases`, and normalized `phone_number`.
+
+### Node Schema (LadybugDB DDL)
+
 ```sql
 -- 1. Person: Any individual (you, contacts, third parties)
 CREATE NODE TABLE Person (
     id STRING,                  -- Generated stable UUID
-    phone_number STRING,        -- Normalized E.164 string (optional/nullable)
+    phone_number STRING,        -- Normalized E.164 string (nullable)
     name STRING,                -- Best display name available
-    aliases STRING[],           -- Nicknames, informal names ["Ejon", "Rezonaldo"]
+    aliases STRING[],           -- Nicknames, informal names ["Ejon", "Bahlil"]
     relationship STRING,        -- "friend", "colleague", "self", etc.
     is_self BOOLEAN,            -- True if this node represents YOU (the owner)
     PRIMARY KEY (id)
@@ -183,10 +221,10 @@ CREATE NODE TABLE Person (
 
 -- 2. Event: Calendar items, meetups, occurrences
 CREATE NODE TABLE Event (
-    id STRING,                  -- Generated UUID
+    id STRING,
     title STRING,               -- "Mabar MLBB Friday"
     summary STRING,             -- LLM-generated description
-    event_date TIMESTAMP,       -- Exact date/time
+    event_date TIMESTAMP,
     is_confirmed BOOLEAN,       -- True if locked-in, False if tentative
     status STRING,              -- "active", "resolved", "stale"
     PRIMARY KEY (id)
@@ -194,10 +232,10 @@ CREATE NODE TABLE Event (
 
 -- 3. Task: Actions, commitments, deadlines
 CREATE NODE TABLE Task (
-    id STRING,                  -- Generated UUID
-    title STRING,               -- "Invite Naurah to game"
-    summary STRING,             -- What needs to be done
-    due_date TIMESTAMP,         -- Optional deadline
+    id STRING,
+    title STRING,               -- "Invite Bunga to game"
+    summary STRING,
+    due_date TIMESTAMP,         -- Optional
     priority STRING,            -- "high", "medium", "low"
     status STRING,              -- "active", "completed", "abandoned"
     PRIMARY KEY (id)
@@ -205,9 +243,9 @@ CREATE NODE TABLE Task (
 
 -- 4. Insight: Emotional contexts, character traits, relationship dynamics, vibes
 CREATE NODE TABLE Insight (
-    id STRING,                  -- Generated UUID
+    id STRING,
     category STRING,            -- "personality", "relationship_dynamic", "preference", "vibe"
-    summary STRING,             -- E.g. "Naurah gets deeply anxious about career choices"
+    summary STRING,             -- "Bunga gets deeply anxious about career choices"
     confidence STRING,          -- "high", "medium", "low"
     status STRING,              -- "active", "resolved", "stale"
     last_observed TIMESTAMP,
@@ -216,45 +254,35 @@ CREATE NODE TABLE Insight (
 
 -- 5. ConversationBlock: Metadata and narrative summaries of chats
 CREATE NODE TABLE ConversationBlock (
-    id STRING,                  -- Generated UUID
+    id STRING,
     source STRING,              -- "whatsapp"
-    summary STRING,             -- LLM narrative summary of "deep talks" or interactions
-    created_at TIMESTAMP,       -- When the block was committed
+    summary STRING,             -- LLM narrative summary
+    created_at TIMESTAMP,
     PRIMARY KEY (id)
 );
 ```
 
-#### Relationship Tables (LadybugDB DDL)
+### Relationship Schema (LadybugDB DDL)
+
 ```sql
--- Links people to events they are participating in
 CREATE REL TABLE PARTICIPANT_IN (FROM Person TO Event);
-
--- Assigns a task to a person
 CREATE REL TABLE ASSIGNED_TO (FROM Task TO Person);
-
--- Tracks who requested a task
 CREATE REL TABLE REQUESTED_BY (FROM Task TO Person);
-
--- Links a Task to an Event (e.g., "Invite Naurah" is part of "MLBB Friday")
 CREATE REL TABLE PART_OF (FROM Task TO Event);
-
--- Links an Insight directly to a target Person (e.g., Insight: Anger -> DIR_TOWARDS -> Rezonaldo)
 CREATE REL TABLE DIR_TOWARDS (FROM Insight TO Person);
-
--- Links Insights to the entities they describe
 CREATE REL TABLE ABOUT (FROM Insight TO Person, FROM Insight TO Event);
 
--- Polymorphic causality tracking (e.g., failed Task triggered Naurah's anger Insight)
+-- Polymorphic causality (e.g., failed Task triggered Bunga's anger Insight)
 CREATE REL TABLE TRIGGERED_BY (
     FROM Insight TO Task,
     FROM Insight TO Event,
     FROM Event TO Event,
     FROM Task TO Task,
-    description STRING,          -- Details on how/why it was triggered
-    last_observed TIMESTAMP      -- For temporal edge decay
+    description STRING,
+    last_observed TIMESTAMP
 );
 
--- Links every node to the conversation block where it originated
+-- Links every node back to its originating conversation block
 CREATE REL TABLE SOURCED_FROM (
     FROM Person TO ConversationBlock,
     FROM Event TO ConversationBlock,
@@ -263,20 +291,17 @@ CREATE REL TABLE SOURCED_FROM (
 );
 ```
 
----
+### Markdown Node Files (Human-Readable Layer)
+Every node in LadybugDB has a corresponding `.md` file on disk — a human-readable mirror used for manual review, Obsidian viewing, and rapid inspection. Files are written asynchronously via a buffered Go Channel (see Section 12) so disk I/O never blocks database operations.
 
-## 7. Memory Node Schema & Templates
+Each file uses Frontmatter and an inline `change_history` log to preserve temporal context:
 
-### Universal Node Header (Markdown View Layer)
-The `.md` files stored on the VPS disk mirror the LadybugDB state for readability and manual review. They are formatted with Frontmatter and a running, inline `change_history` log to preserve temporal context [10].
-
-### Example Node File: `insight_789.md` (Updated Temporally)
 ```yaml
 ---
 id: "insight_789"
 type: "Insight"
 category: "relationship_dynamic"
-title: "Naurah's tension with Rezonaldo"
+title: "Bunga's tension with Bahlil"
 status: "resolved"
 created_at: "2026-06-12T20:40:00Z"
 last_observed: "2026-06-13T10:00:00Z"
@@ -286,126 +311,200 @@ change_history:
     field: "status"
     old_value: "N/A"
     new_value: "active"
-    reason: "Created because Rezonaldo missed the presentation deadline."
+    reason: "Created because Bahlil missed the presentation deadline."
   - timestamp: "2026-06-13T10:00:00Z"
     field: "status"
     old_value: "active"
     new_value: "resolved"
-    reason: "Rezonaldo sent the slides; Naurah confirmed they are good."
+    reason: "Bahlil sent the slides; Bunga confirmed they are good."
 ---
 
 # Narrative Summary (Stored in Indonesian)
-Awalnya terjadi ketegangan karena Rezonaldo lupa ngerjain tugas presentasi DPP. Naurah sempat marah-marah di grup chat. Masalahnya selesai keesokan paginya setelah Rezonaldo akhirnya kirim file PPT dan Naurah mengonfirmasi kalau tugasnya aman [28].
+Awalnya terjadi ketegangan karena Bahlil lupa ngerjain tugas presentasi DPP...
 ```
 
+### Storage & Purging Strategy
+- **Raw WhatsApp Messages:** Retained for 30 days as a temporary recovery buffer, then purged.
+- **LadybugDB:** Permanent storage engine. Nodes are rarely deleted; bad data is the only deletion trigger.
+- **Markdown Node Files:** Synced human-readable views; permanent alongside the graph.
+
+#### Pre-Purge "Open Ends" Sweep
+On Day 30, before raw messages are deleted, the system runs a targeted sweep — **never** a blind audit of all expiring messages. Only `ConversationBlock` nodes still marked `status: open` or with a pending unassigned task are targeted. For these, the LLM writes a final historical narrative summary, marks the block `status: abandoned`, then deletes the raw text.
+
 ---
 
-## 8. Agentic Tooling System (The Traversal Loop)
+## 8. Agentic Query System
 
-Rather than forcing the LLM to write complex Cypher database queries (which leads to syntax errors and app crashes), the AI acts like a human secretary retrieving files. It uses a **"Link-by-Link" Traversal Loop** to step through the graph using a restricted set of simple tools [22].
+Rather than writing raw database queries, the agent acts like a human secretary retrieving files — stepping through the graph using a restricted set of simple tools. This is the **"Link-by-Link" Traversal Loop**.
 
-### The Traversal Workflow
-1. **Search:** The AI uses keywords to locate a starting node (the entry point).
-2. **Scan:** It looks at the surrounding map of connected edges.
-3. **Read:** It opens multiple connected files simultaneously.
-4. **Evaluate:** It decides whether it has enough context to answer. If not, it takes another step or requests help from the user.
+### Traversal Workflow
+1. **Search** — locate a starting node using keywords (entry point)
+2. **Scan** — look at the surrounding map of connected edges
+3. **Read** — open multiple connected nodes simultaneously
+4. **Evaluate** — decide if there's enough context to answer; if not, take another step or ask the user
 
-### The "Fail Fast, Deep Dive" Stamina System
-To prevent the LLM from getting trapped in an infinite loop, burning API tokens, and causing high response latencies, we implement a hybrid **Stamina + Hard Cap** rule [23]:
+### Stamina System (Fail Fast, Deep Dive)
+To prevent infinite loops and token drain:
+- **Base Stamina (2-3 turns):** Small action budget. If completely lost, agent fails fast and asks for a hint immediately.
+- **"Getting Warmer" Bonus (+1 stamina):** If the agent senses it's close to the answer, it can request an extension: `{"status": "getting warmer", "request_extra_stamina": true}`. Backend grants +1 per valid request.
+- **Hard Cap (5-6 turns):** Absolute backend kill switch. Once hit, the backend cuts the loop and forces the agent to ask the user for a hint.
 
-*   **Base Stamina (2-3 Turns):** The agent begins with a small action budget. If it's completely lost, it will "fail fast" and immediately ask you for a hint instead of making you wait.
-*   **"Getting Warmer" Bonus (+1 Stamina):** If the LLM reads a node and senses it is close to the answer, it can output a request to extend its search: `{"status": "getting warmer", "request_extra_stamina": true}`. The backend grants +1 stamina per valid request.
-*   **The Hard Cap (5-6 Turns):** This is the absolute backend kill switch. Under no circumstances can the agent exceed 5 or 6 tool-calling loops. Once the hard cap is hit, the backend cuts the loop and forces the agent to ask the user for a hint.
+### Edge Ranking (Preventing Hub Choking)
+Highly connected nodes (like yourself or core friends) will eventually accumulate thousands of edges. `get_surrounding_graph` never dumps raw data — the backend ranks adjacent nodes by combining **temporal recency** (`last_observed`) and **semantic similarity** to the original query, returning only the top 15.
 
-### Edge Ranking & Scale Filtering (Preventing Hub Choking)
-Certain nodes (like yourself, or core friends) will eventually accumulate thousands of connected edges. If a tool returns all of them, the LLM will choke on noise. 
-*   The `get_surrounding_graph` tool does not dump raw data. 
-*   The backend automatically **ranks** the connected nodes and edges [27].
-*   Ranking is calculated by combining **temporal recency** (`last_observed` timestamp) and **semantic similarity** to the user's initial query. Only the top $N$ (default: 15) most relevant edges are returned [27].
+### Full Agent Toolkit
 
-### Multi-Pointer Performance Optimization
-To keep database lookups extremely fast, the agent is equipped with a parallel fetching tool: `read_nodes(node_ids: list)`. 
-Instead of checking nodes one-by-one (which forces multiple, high-latency API round-trips), the AI can grab up to 5 folders from the filing cabinet at once in a single turn.
-
-### The Core Secretary's Toolkit
-
-| Tool Name | Parameters | Output | Purpose |
+| Tool | Parameters | Output | Purpose |
 |---|---|---|---|
-| `search_nodes` | `keywords: string` | List of node IDs & titles | Searches node titles/summaries to find the initial starting point (Entry Point). Uses LadybugDB-native HNSW vector index. |
-| `get_surrounding_graph` | `node_ids: list` | List of ranked adjacent node IDs & edge types | Returns a filtered map of the top 15 most relevant connections branching out from the target nodes [27]. |
-| `read_nodes` | `node_ids: list` | Array of full node data (JSON/Markdown) | Opens and reads up to 5 nodes simultaneously (multi-pointer). |
-| `ask_user_for_hint` | `question: string` | Text response from user | Pauses the agent loop and asks the user for a clarifying clue (The Clarification System). |
+| `search_nodes` | `keywords: string` | List of node IDs & titles | Entry point search using LadybugDB-native HNSW vector index |
+| `get_surrounding_graph` | `node_ids: list` | Top 15 ranked adjacent node IDs & edge types | Traversal map from current position |
+| `read_nodes` | `node_ids: list` | Array of full node data (JSON/Markdown) | Opens up to 5 nodes simultaneously |
+| `ask_user_for_hint` | `question: string` | Text response from user | Pauses loop and requests a clarifying clue |
+| `check_reminders` | `task_ref?: string` | List of existing reminder rows | Checks SQLite before inserting to prevent duplicates |
+| `upsert_reminder` | `message, deadline, status, task_ref?` | Confirmation | Inserts or updates a reminder row in SQLite |
 
 ---
 
-## 9. LLM Extraction Pipeline
+## 9. Reminder System
 
-### Processing committed blocks
-When a conversation block is committed, the extraction pipeline reads the transcript and creates, links, or updates nodes according to the schema.
+Alfred is a proactive secretary. The Reminder System enables Alfred to notify the user about upcoming deadlines and obligations without requiring an LLM call at notification time.
 
-### Language Boundaries
-*   **Storage (Database properties/Markdown):** Stored explicitly in **Indonesian** [28]. This matches the vocabulary of your real messages, ensuring keyword searches (BM25) and fuzzy lookups match naturally without losing semantic nuance during translation.
-*   **Reasoning (Agent Logic):** Done strictly in **English** [28]. The LLM uses English for its internal monologue (`inner_thoughts`), tool selection, and structure-parsing, as LLMs have significantly stronger logical capabilities on English-trained datasets [28].
+### Philosophy
+Reminders are **operational/transient data**, not knowledge. Storing them as LadybugDB nodes would create overlap with Task nodes with no benefit. They live in a separate **SQLite file** (`reminders.db`) alongside the main binary. SQLite requires no server process, no configuration, and handles concurrent Go reads/writes safely.
+
+### Schema
+
+```sql
+CREATE TABLE reminders (
+    id          TEXT PRIMARY KEY,
+    message     TEXT NOT NULL,          -- Human-readable reminder text (Indonesian)
+    deadline    DATETIME NOT NULL,
+    status      TEXT NOT NULL,          -- pending | sent | needs_clarification | dismissed
+    task_ref    TEXT,                   -- Optional FK to a LadybugDB Task node ID
+    created_at  DATETIME NOT NULL
+);
+-- Prevents duplicate reminders for the same task+deadline
+CREATE UNIQUE INDEX ON reminders(task_ref, deadline);
+```
+
+### Who Populates It
+The **main agent** is solely responsible for writing reminders — never Nightwatch. This happens in two flows:
+- **Extraction pipeline** — when a committed block contains a user-owned task or deadline
+- **User query flow** — when the agent surfaces a task during traversal and a reminder is warranted
+
+Before inserting, the agent calls `check_reminders` to prevent duplicates. The `UNIQUE` index is a database-level safety net.
+
+### Status Lifecycle
+
+```
+pending → sent                  (cron fires push notif)
+pending → dismissed             (user dismisses from PWA)
+pending → needs_clarification   (agent unsure what the task actually is)
+needs_clarification → pending   (user clarifies, agent updates)
+needs_clarification → dismissed
+```
+
+### Cron Job (Dumb Scanner — No LLM)
+A Go cron job runs on a configurable interval (e.g. every hour):
+1. Query SQLite for `status = 'pending'` rows where `deadline` is within the notification window
+2. Fire push notification via PWA Push API
+3. Update `status` to `sent`
+
+The cron never touches LadybugDB and never calls Groq.
+
+### Immediate Push on `needs_clarification`
+Any reminder or node flagged `needs_clarification` is pushed to the user **immediately upon commit** — it does not wait for the cron. This rule applies system-wide: the cron handles scheduled pending reminders only; anything requiring user input is surfaced right away.
+
+### Cascading Deletion
+If a Task node is deleted from LadybugDB (bad data), its associated reminder rows cascade-delete via `task_ref`.
 
 ---
 
-## 10. Storage & Purging Strategy
+## 10. Background Agents
 
-- **Raw WhatsApp Messages:** Retained for 30 days as a temporary recovery buffer, then aggressively purged to respect the 8GB VPS storage limit [8].
-- **LadybugDB Database:** Permanent storage engine.
-- **Markdown Node Files:** Synced human-readable views of the LadybugDB nodes, used for manual edits, external viewers (like Obsidian), and rapid file-reading.
+### Nightwatch (Database Maintenance Agent)
+Nightwatch runs during low-traffic hours (nightly). Its **sole responsibility is database maintenance** — it does not write reminders and does not handle user-facing logic.
 
-### Pre-Purge "Open Ends" Sweep (Graceful Closures)
-To prevent running expensive, redundant AI audits on standard raw messages before they are permanently deleted on Day 30, the system enforces a strict, targeted **Pre-Purge Open-Ends Sweep** [35].
-*   We **never** run a blind, automated sweep over *all* expiring raw messages (doing so drains tokens and computing power redundantly) [35].
-*   Instead, the system queries for any `ConversationBlock` reaching its 30-day deletion date that is still marked as `status: open` or has a pending, unassigned task [35].
-*   For these targeted files, the LLM reads the raw source text one last time, writes a final "historical narrative summary" to permanently preserve the context, updates the Kuzu node properties to `status: abandoned`, and then safely deletes the raw text [35].
+**Nightwatch responsibilities:**
+- Detect potentially duplicate nodes and push them to the **Memory Review Inbox** (PWA) rather than merging silently. Example: *"I noticed 'Friday gaming' and 'MLBB group session' might be the same event. Tap to merge, swipe to keep separate."*
+- Flag or update stale nodes (e.g. tasks that are long overdue with no activity)
+- Run the Pre-Purge Open Ends Sweep on Day 30 (see Section 7)
+
+Nightwatch must immediately yield and pause when a new WAHA webhook arrives.
+
+### Reminder Cron
+A separate, LLM-free cron job responsible only for scanning SQLite and dispatching push notifications. Described in full in Section 9.
 
 ---
 
-## 11. Chat Interface & Observability Layer
+## 11. PWA Interface
 
-### Memory Review Inbox
-A dedicated, Tinder-style swipe interface in the Flutter app [21]. 
-*   **Purpose:** The cleanup agent runs during low-traffic night hours. If it finds potentially duplicate nodes or conflicting information, it doesn't merge them silently. It pushes them to your **Memory Review Inbox** [21].
-*   **UX:** *"I noticed 'Friday gaming' and 'MLBB group session' might be the same event. Tap to merge, swipe to keep separate."* This doubles as a personal reminder/spaced-repetition system that helps the user remember their own life events [21].
+### Authentication
+A JWT credential gate loads before the PWA renders anything. The user provides a username and password; the Go backend validates and returns a JWT which the PWA holds in memory and attaches to all subsequent API requests. No session persistence — re-login on refresh is acceptable. This is a security barrier only, not a user management system.
+
+### Chat Interface
+Natural language Q&A with Alfred's memory. The user types a question; the agent runs the traversal loop and responds in Alfred's persona.
 
 ### Observability Layer
-An interactive debug log inside the chat view (similar to Claude's "thinking" blocks). The user can tap a dropdown during or after a query to watch the agent's exact "link-by-link" journey:
-*   *Thought: "I need to look for Rezonaldo."*
-*   *Tool Call: search_nodes("Rezonaldo")*
-*   *Tool Call: get_surrounding_graph(["rez_123"])*
-*   *Thought: "I see a task related to Naurah. Let me read that task."*
-*   *Tool Call: read_nodes(["task_456"])*
+An interactive debug log inside the chat view (similar to Claude's "thinking" blocks). The user can expand a dropdown during or after a query to watch the agent's exact step-by-step journey:
+- *Thought: "I need to look for Bahlil."*
+- *Tool Call: search_nodes("Bahlil")*
+- *Tool Call: get_surrounding_graph(["rez_123"])*
+- *Thought: "I see a task related to Bunga. Let me read that."*
+- *Tool Call: read_nodes(["task_456"])*
+
+### Memory Review Inbox
+A Tinder-style swipe interface. When Nightwatch finds potentially duplicate or conflicting nodes, it pushes them here rather than merging silently. The user taps to merge or swipes to keep separate. This doubles as a spaced-repetition system for the user's own life events.
+
+### Push Notifications
+Delivered via the PWA Push API + Service Workers. Service Workers run in the background even when the browser is closed, enabling reliable delivery on Android. iOS is supported since Safari 16.4 (2023).
 
 ---
 
-## 12. Infrastructure & Stack Decisions
+## 12. Infrastructure
 
-### Updated Stack Overview
-*   **Operating System:** Ubuntu 24.04 (Budget VPS, 4GB RAM, 8GB Storage)
-*   **Backend Language:** Golang [31]. Compiled as a single static binary. High-performance, low-RAM footprint (~15MB idle), and native Goroutines for highly concurrent webhook handling [31].
-*   **WhatsApp Webhook Provider:** WAHA with GOWS WebSockets.
-*   **Database:** LadybugDB (embedded in-process C++ graph engine via `go-ladybug` bindings) [30]. Includes native, on-disk **HNSW vector indexes** and native **full-text search**.
-*   **LLM Processing:** Groq API (Llama 3 70B for extraction/reasoning, Llama 3 8B for lightweight helper tasks).
-*   **Embedding Generation:** Free external APIs (Gemini Flash or HuggingFace API) to generate query and node embeddings, which are stored and index-searched natively in LadybugDB to offload VPS memory [20].
-*   **Frontend:** Cross-platform Flutter.
+### Stack
 
-### DevOps & Compilation (Avoiding VPS OOM Crashes)
-Because `go-ladybug` uses CGO to compile native C++ graph bindings, building the binary natively on the 4GB VPS will crash the compilation due to lack of RAM [32]. 
-*   **The Build Pipeline:** Static binaries must be cross-compiled locally on a development machine (e.g., using multi-stage Docker builds matching the target VPS architecture) and deployed directly as a pre-built static executable [32].
+| Component | Choice | Reason |
+|---|---|---|
+| OS | Ubuntu 24.04 | Stable LTS on budget VPS |
+| Backend | Golang | ~15MB idle RAM, native goroutines, single static binary, CGO interop for LadybugDB |
+| Graph DB | LadybugDB (via `go-ladybug`) | In-process C++ engine, HNSW vector index, full-text search, Kuzu's open-source successor |
+| Reminder DB | SQLite (`reminders.db`) | Single file, no server, concurrent-safe, native query support |
+| LLM | Groq API (Llama 3 70B / 8B) | Free tier generous enough for personal scale, fast inference |
+| Embeddings | Gemini Flash or HuggingFace API | Free external APIs to avoid loading vector models into 4GB RAM |
+| WhatsApp | WAHA + GOWS WebSockets | Proven webhook provider |
+| Frontend | PWA | Browser-native, no app store, works across all devices via URL, push notif support |
 
-### Non-Blocking Async Markdown Syncer
-To ensure slow disk I/O does not block database transactions or webhook responses, Go handles Markdown writes asynchronously [33].
-*   When a node is updated in LadybugDB, a JSON payload is pushed to a buffered **Go Channel** [33].
-*   A background worker goroutine pulls from the channel and writes the updated Frontmatter to the corresponding `.md` file in the background, keeping memory queries and ingestion running at peak speeds [33].
+### DevOps & Compilation
+`go-ladybug` uses CGO to compile native C++ bindings. Building natively on the 4GB VPS will crash due to insufficient RAM. The build pipeline is:
+- Cross-compile locally using multi-stage Docker builds matching the target VPS architecture
+- Deploy a pre-built static binary directly to the VPS
+
+### Non-Blocking Async Markdown Writes
+To ensure disk I/O never blocks database transactions or webhook responses:
+- When a node is updated in LadybugDB, a JSON payload is pushed to a buffered **Go Channel**
+- A background goroutine pulls from the channel and writes the updated Markdown file asynchronously
 
 ---
 
-## 13. Open Questions & Undiscussed Aspects
+## 13. Open Questions
 
 ### 🔴 High Priority
-- **Q1: Ingestion Queue Architecture:** When the WAHA webhook fires, we must immediately pause background jobs (like the Nightwatch cleanup agent) to avoid database lock hazards [26]. We need a clean, transactional lock mechanism implemented in the Go backend.
+
+**Q1: Ingestion Queue Architecture**
+When the WAHA webhook fires, background jobs must immediately pause to avoid database lock hazards. A clean transactional lock mechanism needs to be designed in the Go backend — the exact implementation is undecided.
+
+**Q2: Error Correction Flow**
+How does the user correct Alfred when it extracts something wrong? The agent may misinterpret a message, create a wrong node, or link things incorrectly. A deliberate correction mechanism — likely via the PWA — needs to be designed so corrections feed back into the agent and update the graph cleanly without leaving stale data.
+
+### 🟡 Low Priority / Future
+
+**Q3: Off-Site Backup Strategy**
+LadybugDB and SQLite are both single files on the VPS. If the VPS dies, all memory is lost. A scheduled backup strategy is needed — candidates: rsync to another machine, or push to object storage (Backblaze B2 or Cloudflare R2). Not important for prototype phase.
+
+**Q4: Multi-Source Architecture**
+How do future ingestion sources (Telegram, Email) plug in without rewriting the ingestion layer? Likely a source-agnostic message interface that WAHA and future adapters all conform to. Not a near-future priority.
 
 ---
 
@@ -413,20 +512,26 @@ To ensure slow disk I/O does not block database transactions or webhook response
 
 | # | Decision | Rationale | Date |
 |---|---|---|---|
-| 1-19 | (Historical Decisions 1 through 19 preserved from original log) | Standardized in initial draft | Jun 12, 2026 |
-| 20 | **No local heavy vector models** | Squeezing vector models into 4GB RAM is a bottleneck. We use free, lightweight external APIs for embeddings [20]. | Jun 12, 2026 |
-| 21 | **Memory Review Inbox in Flutter** | Low-confidence merges or conflicts are pushed to a dedicated user inbox. Helps the AI make safe decisions while acting as a reminder system for the user [21]. | Jun 12, 2026 |
-| 22 | **"Link-by-Link" Traversal Tooling** | We do not let the LLM write Cypher. We provide 4 strict tools (`search`, `get_links`, `read_nodes`, `ask_user`) for human-like file navigation [22]. | Jun 12, 2026 |
-| 23 | **Stamina + Hard Cap Rule** | Base stamina is 2-3 turns to fail fast and avoid high latency when lost. Warm leads grant +1 stamina, but a hard cap of 5-6 turns prevents token drain/loops [23]. | Jun 12, 2026 |
-| 24 | **Rename Fact Table to Insight Table** | A cold "Fact" model is too rigid. "Insights" capture qualitative values like character traits, vibes, shared memories, and emotional dynamics [24]. | Jun 12, 2026 |
-| 25 | **Polymorphic Causality Edges** | We implement polymorphic REL tables (like `TRIGGERED_BY`) in LadybugDB so any node can cause, link to, or influence any other node organically [25]. | Jun 12, 2026 |
-| 26 | **Pause on Webhook** | Any background database cleanup job must instantly yield and pause when a new WAHA message arrives to avoid data hazards and DB locks [26]. | Jun 12, 2026 |
-| 27 | **Edge Ranking in Traversal** | To prevent context choking on highly connected "hub" nodes, adjacent nodes are dynamically ranked by recency and semantic relevance, returning only the top 15 [27]. | Jun 12, 2026 |
-| 28 | **Indonesian Nodes, English Brain** | Node content properties are stored explicitly in Indonesian to match raw search terms, while the agent's internal reasoning is done in English to maximize logical performance [28]. | Jun 12, 2026 |
-| 29 | **UUIDs + Semantic Identity Resolution** | Raw JIDs are discarded as database keys to prevent `@lid` mutations. `Person.id` uses stable generated UUIDs, and ingestion matches incoming senders via fuzzy semantic matching on phone, name, and aliases [29]. | Jun 12, 2026 |
-| 30 | **Migrate to LadybugDB** | Apple's October 2025 acquisition of Kùzu Inc. and subsequent repo archiving means Kuzu is unmaintained. LadybugDB is the direct, open-source community successor [30]. | Jun 12, 2026 |
-| 31 | **Golang for Backend Stack** | Ultra-lean RAM usage (~15MB), blistering speed, native concurrency (goroutines) for handling busy webhooks, and seamless interop with LadybugDB's C++ core via CGO [31]. | Jun 12, 2026 |
-| 32 | **DevOps Cross-Compilation** | Compiling LadybugDB's native C++ bindings will crash a 4GB VPS. We enforce compiling locally via multi-stage Docker and shipping a static Go binary [32]. | Jun 12, 2026 |
-| 33 | **Non-Blocking Async Markdown Writes** | Offloads slower disk I/O writes (syncing Markdown node views) to background goroutines via Go channels to keep database transactions running at peak speeds [33]. | Jun 12, 2026 |
-| 34 | **The "Alfred" POV Persona** | To prevent conversational token bloat and hallucinated "therapist-speak", the AI acts as a loyal, dry, professional, and ego-centric secretary [34]. | Jun 12, 2026 |
-| 35 | **Pre-Purge "Open Ends" Sweep Only** | To avoid redundant token expenditure, we do not audit standard expiring messages. We only sweep unresolved open blocks on Day 30 to close them gracefully [35]. | Jun 12, 2026 |
+| 20 | **No local vector models** | Squeezing vector models into 4GB RAM is a bottleneck. Free lightweight external APIs handle embeddings instead. | Jun 12, 2026 |
+| 21 | **Memory Review Inbox** | Low-confidence merges or conflicts are pushed to a user inbox rather than merged silently. Acts as a spaced-repetition system for the user's own life events. | Jun 12, 2026 |
+| 22 | **Link-by-Link Traversal Tooling** | No raw Cypher queries. The agent uses 4 strict tools for human-like graph navigation, avoiding syntax errors and hallucinated queries. | Jun 12, 2026 |
+| 23 | **Stamina + Hard Cap Rule** | Base stamina 2-3 turns to fail fast. Warm leads grant +1. Hard cap at 5-6 prevents token drain and infinite loops. | Jun 12, 2026 |
+| 24 | **Insight Table (not Fact Table)** | "Facts" are too rigid. Insights capture qualitative values like character traits, vibes, shared memories, and emotional dynamics. | Jun 12, 2026 |
+| 25 | **Polymorphic Causality Edges** | Polymorphic `TRIGGERED_BY` REL tables allow any node to cause, link to, or influence any other node organically. | Jun 12, 2026 |
+| 26 | **Pause on Webhook** | All background jobs must instantly yield when a new WAHA message arrives to avoid data hazards and DB locks. | Jun 12, 2026 |
+| 27 | **Edge Ranking in Traversal** | Adjacent nodes ranked by recency and semantic relevance, top 15 only. Prevents context choking on highly connected hub nodes. | Jun 12, 2026 |
+| 28 | **Indonesian Nodes, English Brain** | Node content stored in Indonesian to match real search terms. Agent reasoning done in English for stronger logical performance. | Jun 12, 2026 |
+| 29 | **UUIDs + Semantic Identity Resolution** | Raw JIDs discarded as keys due to `@lid` mutation risk. Stable UUIDs used; incoming senders matched via fuzzy semantic matching. | Jun 12, 2026 |
+| 30 | **Migrate to LadybugDB** | Apple's October 2025 acquisition of Kùzu Inc. and subsequent repo archiving makes Kuzu unmaintained. LadybugDB is the direct open-source successor. | Jun 12, 2026 |
+| 31 | **Golang Backend** | ~15MB idle RAM, fast, native goroutines for concurrent webhook handling, seamless CGO interop with LadybugDB. | Jun 12, 2026 |
+| 32 | **Cross-Compilation DevOps** | Compiling LadybugDB's C++ bindings natively on the VPS would OOM crash it. Compiled locally via multi-stage Docker, deployed as a static binary. | Jun 12, 2026 |
+| 33 | **Non-Blocking Async Markdown Writes** | Disk I/O writes offloaded to background goroutines via Go channels. Keeps database transactions and ingestion at peak speed. | Jun 12, 2026 |
+| 34 | **The Alfred Persona** | Prevents token bloat and hallucinated therapist-speak. Loyal, dry, professional, ego-centric secretary voice. | Jun 12, 2026 |
+| 35 | **Pre-Purge Open Ends Sweep Only** | Never audit all expiring messages blindly. Only sweep unresolved open blocks on Day 30 to close them gracefully. | Jun 12, 2026 |
+| 36 | **Flutter → PWA** | Alfred is currently single-user; Flutter's build pipeline adds complexity with no gain at this stage. PWA covers all required features (push notifications, chat, observability, swipe inbox) and opens across all devices via URL. iOS dev burden avoided. PWA served as a static build from the Go backend. Multi-user architecture planned post-validation. | Jun 13, 2026 |
+| 37 | **JWT Credential Gate** | PWA is browser-accessible via URL — a security gate is required. JWT login screen before anything renders. No session persistence. Security barrier only, not a user management system. Chosen over Basic Auth for cleaner future multi-user extensibility. | Jun 13, 2026 |
+| 38 | **SQLite for Reminder Storage** | Reminders are operational/transient data, not knowledge. Storing as LadybugDB nodes would overlap with Task nodes. SQLite is a single file, no server process, concurrent-safe. Chosen over JSON file for concurrency safety and native query support. | Jun 13, 2026 |
+| 39 | **Reminders Owned by Main Agent, Not Nightwatch** | Nightwatch is database maintenance only. Reminder creation is a side effect of extraction and query flows — the agent has the context to decide what is reminder-worthy. | Jun 13, 2026 |
+| 40 | **Dumb Cron for Reminder Dispatch** | The cron that fires push notifications is intentionally LLM-free. Pure deadline scanner: query SQLite, fire push notif, mark sent. LLM only involved upstream (writing reminders) and downstream if clarification needed. | Jun 13, 2026 |
+| 41 | **Immediate Push on needs_clarification** | Anything flagged needs_clarification is pushed to the user immediately upon commit, not queued for the cron. Applies system-wide. | Jun 13, 2026 |
+| 42 | **Prompt Caching** | System prompt is long and resent on every LLM call including every traversal loop turn. Groq prompt caching halves input token costs on repeated prefixes and cached tokens don't count toward rate limits. Must be enabled on all extraction and traversal calls. | Jun 13, 2026 |
