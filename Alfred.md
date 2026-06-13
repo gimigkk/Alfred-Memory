@@ -583,7 +583,16 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 ### ⚫ Critical Priority
 
 **Q1: Agentic Pipeline Specification**
-The turn-by-turn logic of both the query flow (user asks Alfred something) and the extraction flow (new conversation block committed) needs to be fully specced. What does the agent see at each turn, what does it decide, what tools does it call, in what order, and under what conditions does it terminate or escalate? This will surface missing tools and edge cases that can't be caught from the schema alone.
+The turn-by-turn logic of every pipeline needs to be fully specced — what the agent sees at each step, what it decides, what tools it calls, and under what conditions it terminates or escalates. This will surface missing tools and edge cases that can't be caught from the schema alone. Pipelines to spec:
+
+1. **Ingestion & Extraction** — webhook → block builder → commit → Phase 1 extract → Phase 2 link → write to graph
+2. **Alfred Chat / Query Flow** — user message → traversal loop → optional write → response
+3. **Reminder Creation** — extraction or query flow → check → upsert SQLite
+4. **Reminder Dispatch** — cron → scan SQLite → push notification
+5. **Nightwatch** — nightly → dedup detection → stale flagging → pre-purge sweep
+6. **needs_clarification Push** — flagged node created → format → push notification → surface in Memory Review Inbox
+7. **Nightwatch Merge** — user swipes merge → surviving node picked → edges re-pointed → duplicate deleted
+8. **Embedding Generation** — node created/updated → call external API → store vector
 
 ### 🔴 High Priority
 
