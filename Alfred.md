@@ -207,57 +207,86 @@ Raw WhatsApp JIDs mutate and rotate dynamically across different clients, making
 
 ### Node Schema (LadybugDB DDL)
 
+> **Content model:** Every node type except Person carries a `content STRING` field — Alfred's dry, first-person narrative of what this node represents, written in Indonesian. This is the primary field the linking agent reads in Phase 2. Structured metadata fields (status, dates, priority) exist alongside it for querying and Nightwatch logic. Person is a pure identity anchor — its substance lives in the surrounding graph.
+
+> **Aliases:** Every node type carries `aliases STRING[]`. Aliases are informal names, abbreviations, or references this node is known by in chat ("rapat tadi", "sotq", "event kemarin"). The Phase 2 linking agent searches aliases, not just canonical names, to satisfy the explicit keyword rule.
+
+> **needs_clarification:** Every node type carries `needs_clarification BOOLEAN`. When set true, the node was created with one or more fields that could not be grounded in source text or vault data. An immediate push notification is sent to the user. The node is visible in the Memory Review Inbox until resolved. Alfred never guesses to fill a field — a confident wrong node is worse than an honest gap.
+
 ```sql
--- 1. Person: Any individual (you, contacts, third parties)
+-- 1. Person: Identity anchor. Substance lives in surrounding graph, not on the node itself.
 CREATE NODE TABLE Person (
-    id STRING,                  -- Generated stable UUID
-    phone_number STRING,        -- Normalized E.164 string (nullable)
-    name STRING,                -- Best display name available
-    aliases STRING[],           -- Nicknames, informal names ["Ejon", "Bahlil"]
-    relationship STRING,        -- "friend", "colleague", "self", etc.
-    is_self BOOLEAN,            -- True if this node represents YOU (the owner)
+    id STRING,                      -- Generated stable UUID
+    name STRING,                    -- Best display name available
+    aliases STRING[],               -- Nicknames, informal names ["qil", "pit", "rapit"]
+    phone_number STRING,            -- Normalized E.164 (nullable)
+    is_self BOOLEAN,                -- True if this node represents the owner
+    needs_clarification BOOLEAN,    -- True if identity could not be fully resolved
     PRIMARY KEY (id)
 );
 
--- 2. Event: Calendar items, meetups, occurrences
+-- 2. Event: Any occurrence — meetings, sessions, social events, deadlines
 CREATE NODE TABLE Event (
     id STRING,
-    title STRING,               -- "Mabar MLBB Friday"
-    summary STRING,             -- LLM-generated description
-    event_date TIMESTAMP,
-    is_confirmed BOOLEAN,       -- True if locked-in, False if tentative
-    status STRING,              -- "active", "resolved", "stale"
+    name STRING,                    -- Canonical name: "SoTQ IEEE 2026"
+    aliases STRING[],               -- ["sotq", "acara tadi", "event kemarin"]
+    content STRING,                 -- Alfred's narrative of what this event is/was
+    event_date TIMESTAMP,           -- Nullable if date unconfirmed
+    status STRING,                  -- "planned" | "active" | "completed" | "cancelled" | "stale"
+    needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
 
--- 3. Task: Actions, commitments, deadlines
+-- 3. Task: Actions, commitments, obligations with a named owner
 CREATE NODE TABLE Task (
     id STRING,
-    title STRING,               -- "Invite Bunga to game"
-    summary STRING,
-    due_date TIMESTAMP,         -- Optional
-    priority STRING,            -- "high", "medium", "low"
-    status STRING,              -- "active", "completed", "abandoned"
+    name STRING,                    -- Canonical short label
+    aliases STRING[],               -- Alternative references in chat
+    content STRING,                 -- Full context: what, who, why
+    verbatim STRING,                -- Exact source text if wording itself is meaningful (nullable)
+    due_date TIMESTAMP,             -- Nullable
+    priority STRING,                -- "high" | "medium" | "low"
+    status STRING,                  -- "active" | "completed" | "abandoned" | "stale"
+    needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
 
--- 4. Insight: Emotional contexts, character traits, relationship dynamics, vibes
+-- 4. Insight: Behavioral patterns, relationship dynamics, character observations
 CREATE NODE TABLE Insight (
     id STRING,
-    category STRING,            -- "personality", "relationship_dynamic", "preference", "vibe"
-    summary STRING,             -- "Bunga gets deeply anxious about career choices"
-    confidence STRING,          -- "high", "medium", "low"
-    status STRING,              -- "active", "resolved", "stale"
+    name STRING,                    -- Short label
+    aliases STRING[],               -- Alternative phrasings observed in chat
+    content STRING,                 -- Full observational narrative, grounded in source text
+    verbatim STRING,                -- Exact statement that triggered this insight (nullable)
+    category STRING,                -- "personality" | "relationship_dynamic" | "preference" | "pattern"
+    confidence STRING,              -- "high" | "medium" | "low"
+    status STRING,                  -- "active" | "stale" | "contradicted"
     last_observed TIMESTAMP,
+    needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
 
--- 5. ConversationBlock: Metadata and narrative summaries of chats
+-- 5. ConversationBlock: The atomic unit of processing. Holds the raw transcript.
 CREATE NODE TABLE ConversationBlock (
     id STRING,
-    source STRING,              -- "whatsapp"
-    summary STRING,             -- LLM narrative summary
+    source STRING,                  -- "whatsapp"
+    chat_id STRING,                 -- Which group/chat this block came from
+    raw_transcript STRING,          -- Full message log including WAHA quote payloads, preserved as-is
+    content STRING,                 -- Alfred's narrative summary, written after extraction
     created_at TIMESTAMP,
+    PRIMARY KEY (id)
+);
+
+-- 6. Circle: A named group of people with shared context
+-- Replaces the need for a separate Organization node type.
+-- "BPH IEEE", "Divisi C&M", a manager's subordinates — all Circles.
+-- Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context, not schema.
+CREATE NODE TABLE Circle (
+    id STRING,
+    name STRING,                    -- Canonical group name
+    aliases STRING[],               -- Informal references to this group
+    content STRING,                 -- Alfred's description of this group and its purpose
+    needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
 ```
@@ -265,29 +294,81 @@ CREATE NODE TABLE ConversationBlock (
 ### Relationship Schema (LadybugDB DDL)
 
 ```sql
-CREATE REL TABLE PARTICIPANT_IN (FROM Person TO Event);
-CREATE REL TABLE ASSIGNED_TO (FROM Task TO Person);
-CREATE REL TABLE REQUESTED_BY (FROM Task TO Person);
-CREATE REL TABLE PART_OF (FROM Task TO Event);
-CREATE REL TABLE DIR_TOWARDS (FROM Insight TO Person);
-CREATE REL TABLE ABOUT (FROM Insight TO Person, FROM Insight TO Event);
-
--- Polymorphic causality (e.g., failed Task triggered Bunga's anger Insight)
-CREATE REL TABLE TRIGGERED_BY (
-    FROM Insight TO Task,
-    FROM Insight TO Event,
-    FROM Event TO Event,
-    FROM Task TO Task,
-    description STRING,
-    last_observed TIMESTAMP
+-- Person participated in an Event. Role captures their function (nullable).
+-- Grounded in data: Rafid had "sambutan" role at SoTQ — participation alone is insufficient.
+CREATE REL TABLE PARTICIPANT_IN (
+    FROM Person TO Event,
+    role STRING                     -- "sambutan" | "peserta" | "panitia" | "timekeeper" | null
 );
 
--- Links every node back to its originating conversation block
+-- Task is assigned to a Person (the doer)
+CREATE REL TABLE ASSIGNED_TO (FROM Task TO Person);
+
+-- Task was requested by a Person (the requester, may differ from assignee)
+CREATE REL TABLE REQUESTED_BY (FROM Task TO Person);
+
+-- Task belongs to an Event or Circle scope
+CREATE REL TABLE PART_OF (
+    FROM Task TO Event,
+    FROM Task TO Circle             -- Task scoped to a Circle (e.g. a division's responsibility)
+);
+
+-- Insight is directed at a Person or Circle
+CREATE REL TABLE DIR_TOWARDS (
+    FROM Insight TO Person,
+    FROM Insight TO Circle          -- Insight about a group dynamic
+);
+
+-- Causal relationship: one node directly caused another
+-- Grounded in data: SoTQ Event caused multiple Tasks; metkuan deadline caused urgency Tasks
+CREATE REL TABLE CAUSED_BY (
+    FROM Task TO Event,             -- Task arose from an Event
+    FROM Task TO Task,              -- Task arose from another Task (explicit only, not inferred)
+    FROM Event TO Event,            -- Event caused another Event (e.g. cancellation → reschedule)
+    created_at TIMESTAMP
+);
+
+-- Insight is supported by observed evidence
+-- An Insight's confidence is only as good as its evidence chain
+CREATE REL TABLE EVIDENCED_BY (
+    FROM Insight TO Task,           -- Insight supported by a Task observation
+    FROM Insight TO Event,          -- Insight supported by an Event observation
+    FROM Insight TO ConversationBlock, -- Insight supported by a specific block
+    observed_at TIMESTAMP
+);
+
+-- Nightwatch conflict detection: two Insights make contradicting claims
+-- Never created by extraction pipeline — only by Nightwatch
+CREATE REL TABLE CONTRADICTS (
+    FROM Insight TO Insight,
+    detected_at TIMESTAMP,
+    resolved BOOLEAN                -- False until user resolves via Memory Review Inbox
+);
+
+-- Person→Person relationship. Structural descriptor, not behavioral (behavioral lives in Insights).
+-- Descriptor uses canonical vocabulary from skill.md but is not a hard enum.
+CREATE REL TABLE KNOWS (
+    FROM Person TO Person,
+    descriptor STRING,              -- "teman dekat" | "rekan" | "senior" | "junior" | "kenalan"
+    context STRING,                 -- Where this relationship exists
+    since TIMESTAMP
+);
+
+-- Person belongs to a Circle, with an optional role
+-- Role is what enables speaker-scoped alias resolution ("anak gua" → kadiv's subordinates)
+CREATE REL TABLE MEMBER_OF (
+    FROM Person TO Circle,
+    role STRING,                    -- "kadiv" | "manager" | "staff" | null
+    since TIMESTAMP
+);
+
+-- Every node traces back to its originating ConversationBlock
 CREATE REL TABLE SOURCED_FROM (
     FROM Person TO ConversationBlock,
     FROM Event TO ConversationBlock,
     FROM Task TO ConversationBlock,
-    FROM Insight TO ConversationBlock
+    FROM Insight TO ConversationBlock,
+    FROM Circle TO ConversationBlock
 );
 ```
 
@@ -492,8 +573,7 @@ To ensure disk I/O never blocks database transactions or webhook responses:
 
 ### ⚫ Critical Priority
 
-**Q1: Missing Content Field on Node Types**
-Most node types currently only have structured metadata fields with no free-form content field where the actual substance of the memory lives. Every node likely needs a `content STRING` or consistent `summary STRING` field that holds the narrative and context. The current schema is too restrictive without it.
+**~~Q1: Missing Content Field on Node Types~~** ✅ Resolved — See Decisions 50–58. Schema redesigned with unified `content STRING` across all non-Person node types, `needs_clarification BOOLEAN` on all types, `aliases STRING[]` on all types, and ConversationBlock now carries `raw_transcript STRING`. Person confirmed as pure identity anchor with no content body.
 
 **Q2: Memory Update & Modification Flow**
 The spec describes how nodes get created but not how they get updated when new information contradicts or extends existing memory. Undecided: when the extraction pipeline finds information relating to an existing node, does it overwrite, append, or version? Who writes to `change_history` — the agent during extraction or the user manually? What is the exact PWA mechanism for user corrections (Q2)? What happens to both nodes' content when Nightwatch merges two duplicates via the Memory Review Inbox?
@@ -513,6 +593,9 @@ LadybugDB and SQLite are both single files on the VPS. If the VPS dies, all memo
 
 **Q2: Multi-Source Architecture**
 How do future ingestion sources (Telegram, Email) plug in without rewriting the ingestion layer? Likely a source-agnostic message interface that WAHA and future adapters all conform to. Not a near-future priority.
+
+**Q3: User-Taught Extraction Rules (Self-Updating skill.md)**
+The user could indirectly prompt-engineer Alfred's extraction criteria by telling it what to save or ignore. Alfred would then rewrite its own extraction skill.md to reflect those preferences (e.g. "stop saving random event announcements unless I'm directly involved"). Scope-creep risk for now — noted as a future personalisation feature post-validation.
 
 ---
 
@@ -543,3 +626,22 @@ How do future ingestion sources (Telegram, Email) plug in without rewriting the 
 | 40 | **Dumb Cron for Reminder Dispatch** | The cron that fires push notifications is intentionally LLM-free. Pure deadline scanner: query SQLite, fire push notif, mark sent. LLM only involved upstream (writing reminders) and downstream if clarification needed. | Jun 13, 2026 |
 | 41 | **Immediate Push on needs_clarification** | Anything flagged needs_clarification is pushed to the user immediately upon commit, not queued for the cron. Applies system-wide. | Jun 13, 2026 |
 | 42 | **Prompt Caching** | System prompt is long and resent on every LLM call including every traversal loop turn. Groq prompt caching halves input token costs on repeated prefixes and cached tokens don't count toward rate limits. Must be enabled on all extraction and traversal calls. | Jun 13, 2026 |
+| 43 | **Two-Phase Extraction: Extract then Link** | Extraction (reading the conversation) and linking (reading the graph) are cognitively distinct tasks. Phase 1 reads the committed block + prior block summary, outputs candidate nodes with no graph access. Phase 2 traverses the vault to dedup and link. Conflating both in one prompt degrades quality on both. | Jun 13, 2026 |
+| 44 | **Explicit Keyword Linking Only** | Nodes are only linked if the source text explicitly mentions or references the target node by name or alias. No implicit linking based on the LLM's background knowledge (e.g. two people both being from IEEE is not sufficient to link a node to the IEEE organisation). Every edge must be justifiable from the node's own content. | Jun 13, 2026 |
+| 45 | **Aliases as First-Class Concept Across All Node Types** | Aliases are not just a Person concern. Events, Tasks, and other nodes are referred to informally in Indonesian chat ("rapat tadi", "meeting kemarin"). The linking agent in Phase 2 must search against aliases, not just canonical names, otherwise the explicit keyword rule breaks on informal language. Schema redesign required. | Jun 13, 2026 |
+| 46 | **Ambiguous Extractions Always Fail to needs_clarification** | When the extraction pipeline cannot resolve context (e.g. a payment task with no stated reason), it creates a partial node flagged needs_clarification and triggers an immediate push to the user. It never guesses or silently creates incomplete nodes. | Jun 13, 2026 |
+| 47 | **WAHA Quote Payload Preserved in ConversationBlock** | WhatsApp reply-to metadata (the quoted message) is load-bearing for correct extraction. "2" as a reply to "maap yah gereja" is a non-commitment; without the quote context it could be misread as volunteering. The quote payload from WAHA must be preserved in the ConversationBlock transcript, not stripped before LLM processing. | Jun 13, 2026 |
+| 48 | **Relevance Filter: BPH Perspective** | Alfred extracts for the owner as an IEEE BPH member. Multi-node commits are allowed but each node is evaluated independently against this relevance filter. Organisational events and tasks are likely relevant even when the owner is not explicitly named, given the group chat context. | Jun 13, 2026 |
+| 49 | **Phase 2 Linking: Search Aliases + Explicit Match** | The Phase 2 linking agent searches the vault for candidate nodes sharing explicit keywords (including aliases) with the new node. A link is created only if the new node's content directly references the candidate. Semantic similarity alone is insufficient — the match must be grounded in the text. | Jun 13, 2026 |
+| 50 | **Person is a Pure Identity Anchor** | Person node holds only identity fields: name, aliases, phone_number, is_self, needs_clarification. No content body, no bio, no cached summary. A person's substance is their surrounding subgraph. Denormalized caches (bio fields) break graph atomicity and create dual-source-of-truth problems. | Jun 13, 2026 |
+| 51 | **Unified content STRING replaces scattered summary fields** | All node types except Person carry a single `content STRING` field — Alfred's dry Indonesian narrative of what the node represents. Replaces the inconsistent `summary` fields on Event, Task, Insight, ConversationBlock. ConversationBlock additionally carries `raw_transcript STRING` for the unprocessed message log. | Jun 13, 2026 |
+| 52 | **needs_clarification is first-class on all node types** | Any field that cannot be grounded in source text or vault data is left null and `needs_clarification` set true. Never inferred or guessed. Triggers immediate push to user and surfaces in Memory Review Inbox. A confident wrong node is worse than an honest gap. | Jun 13, 2026 |
+| 53 | **aliases STRING[] on all node types** | Informal references ("rapat tadi", "sotq", "event kemarin") must be searchable by the Phase 2 linking agent. Aliases are not just a Person concern — Events, Tasks, and Insights are referenced informally in Indonesian chat. | Jun 13, 2026 |
+| 54 | **TRIGGERED_BY split into CAUSED_BY, EVIDENCED_BY, CONTRADICTS** | TRIGGERED_BY was semantically overloaded across causality, evidence, and contradiction. Split into three typed REL tables so the pointer fan-out strategy can follow specific edge types deliberately. CONTRADICTS is Nightwatch-only — never written by the extraction pipeline. | Jun 13, 2026 |
+| 55 | **PARTICIPANT_IN carries role STRING** | Participation alone is insufficient. Rafid had "sambutan" role at SoTQ — this is meaningfully different from a regular attendee. Role is nullable for general participation. | Jun 13, 2026 |
+| 56 | **KNOWS REL table added for Person→Person** | Structural relationship descriptor between people. Captures role/closeness ("teman dekat", "senior", "rekan") and context ("IEEE BPH", "kuliah"). Behavioral dynamics live in Insights, not on this edge. Descriptor uses canonical vocabulary from skill.md but is not a hard enum. | Jun 13, 2026 |
+| 57 | **Event status replaces is_confirmed BOOLEAN** | Boolean is too coarse. Real events are planned, active, completed, cancelled, or stale — not just confirmed/unconfirmed. Status enum: "planned" | "active" | "completed" | "cancelled" | "stale". | Jun 13, 2026 |
+| 58 | **ConversationBlock stores raw_transcript** | Raw message log including WAHA quote payloads must be preserved on the node, not stripped before LLM processing. Quote payloads are load-bearing for correct reply-chain interpretation. content field holds Alfred's post-extraction summary. | Jun 13, 2026 |
+| 59 | **Circle node type added** | Named groups of people with shared context ("BPH IEEE", "Divisi C&M", a manager's subordinates). Replaces the need for a separate Organization node. Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context (MEMBER_OF role field), not by schema encoding. | Jun 13, 2026 |
+| 60 | **verbatim STRING field on Task and Insight** | Quotes live inside nodes, not as separate node types. A Quote is never a navigation destination — it's supporting material. verbatim is populated only when exact wording carries meaning that Alfred's paraphrase would lose (explicit commitments, certificate numbers, strong direct statements). Nullable on all nodes that carry it. | Jun 13, 2026 |
+| 61 | **MEMBER_OF REL table added** | Person→Circle relationship with role STRING. Role ("kadiv", "manager", "staff") is what enables the agent to resolve speaker-scoped aliases — if Syazana is kadiv of a Circle, "anak gua" from Syazana resolves to that Circle's members. | Jun 13, 2026 |
