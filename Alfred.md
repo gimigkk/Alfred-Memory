@@ -21,8 +21,9 @@
 10. [Background Agents](#10-background-agents)
 11. [PWA Interface](#11-pwa-interface)
 12. [Infrastructure](#12-infrastructure)
-13. [Open Questions](#13-open-questions)
-14. [Decision Log](#14-decision-log)
+13. [Project Phases](#13-project-phases)
+14. [Open Questions](#14-open-questions)
+15. [Decision Log](#15-decision-log)
 
 ---
 
@@ -578,7 +579,54 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 
 ---
 
-## 13. Open Questions
+## 13. Project Phases
+
+### Phase 1 — Core Loop
+**Goal:** Ingest real WhatsApp data and query it. Nothing else matters until this works. If the memory model holds up here, the thesis is proven.
+
+**Pipelines:**
+- Ingestion & Extraction (Phase 1 + Phase 2)
+- Alfred Chat / Query Flow
+
+**Done when:** Alfred can watch a live group chat, extract nodes correctly, and answer natural language questions about what it saw.
+
+---
+
+### Phase 2 — Proactive Secretary
+**Goal:** Alfred becomes useful day-to-day. Catches obligations and surfaces them before they're missed.
+
+**Pipelines:**
+- Reminder Creation
+- Reminder Dispatch (cron)
+- needs_clarification Push
+
+**Done when:** Alfred proactively pushes deadline reminders and surfaces ambiguous obligations without being asked.
+
+---
+
+### Phase 3 — Graph Maintenance
+**Goal:** The graph stays healthy over time as data accumulates.
+
+**Pipelines:**
+- Nightwatch (dedup, stale flagging, pre-purge sweep)
+- Nightwatch Merge (user-driven via Memory Review Inbox)
+- Embedding Generation
+
+**Done when:** Nightwatch runs nightly without incident, the Memory Review Inbox surfaces real duplicates, and search quality holds up as the graph grows.
+
+---
+
+### Phase 4 — Polish & Expansion
+**Goal:** Hardening, extensibility, and personalisation post-validation.
+
+- Error correction flow (PWA-driven)
+- Off-site backup strategy
+- Multi-source ingestion (Telegram, Email)
+- User-taught extraction rules (self-updating skill.md)
+
+---
+
+## 14. Open Questions
 
 ### ⚫ Critical Priority
 
@@ -615,7 +663,7 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 
 ---
 
-## 14. Decision Log
+## 15. Decision Log
 
 | # | Decision | Rationale | Date |
 |---|---|---|---|
