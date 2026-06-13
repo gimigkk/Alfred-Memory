@@ -112,9 +112,7 @@ Not just a smart notes app. Alfred is closer to a personal epistemics engine —
 │                     MEMORY VAULT                            │
 │   LadybugDB (C++ embedded graph DB via go-ladybug)          │
 │   Core node types: Person, Event, Task, Insight,            │
-│   ConversationBlock                                         │
-│   Human-readable views: Markdown files per node             │
-│   Async disk writes offloaded to buffered Go channels       │
+│   ConversationBlock, Circle                                 │
 └────────────────────────────┬────────────────────────────────┘
                              │
                Tool-callable memory interface
@@ -200,6 +198,8 @@ The conversation block is the **fundamental unit of processing** — analogous t
 - **Committed:** A fully sealed block ready for LLM extraction.
 - **Abandoned:** A block that was interrupted and never naturally closed. Defaulted after a max-age threshold. On Day 30, any open block reaching the purge window gets a final LLM sweep before raw deletion (see Section 10).
 
+Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced boundary. Messages from different group chats never share a block.
+
 ---
 
 ## 6. LLM Extraction Pipeline
@@ -207,8 +207,11 @@ The conversation block is the **fundamental unit of processing** — analogous t
 ### Trigger
 When a conversation block is committed, the extraction pipeline reads the transcript and creates, links, or updates nodes in LadybugDB according to the schema.
 
+### Cross-Block Event Deduplication
+The same event (e.g. SoTQ) may be referenced across many blocks over time. Phase 2 first searches by alias match. If no alias matches but the block is temporally proximate to a known event and context is consistent, the agent attempts to link. If confidence is insufficient, it flags `needs_clarification` and asks the user rather than silently creating a duplicate node.
+
 ### Language Boundaries
-- **Storage (Database properties / Markdown):** Stored explicitly in **Indonesian**. This matches the vocabulary of real messages, ensuring keyword searches (BM25) and fuzzy lookups match naturally without losing semantic nuance in translation.
+- **Storage (Database properties):** Stored explicitly in **Indonesian**. This matches the vocabulary of real messages, ensuring keyword searches (BM25) and fuzzy lookups match naturally without losing semantic nuance in translation.
 - **Reasoning (Agent Logic):** Done strictly in **English**. The LLM uses English for its internal monologue (`inner_thoughts`), tool selection, and structure-parsing, as LLMs have significantly stronger logical capabilities on English-trained data.
 
 ### LLM Fallback Chain
@@ -235,6 +238,8 @@ Raw WhatsApp JIDs mutate and rotate dynamically across different clients, making
 
 > **Aliases:** Every node type carries `aliases STRING[]`. Aliases are informal names, abbreviations, or references this node is known by in chat ("rapat tadi", "sotq", "event kemarin"). The Phase 2 linking agent searches aliases, not just canonical names, to satisfy the explicit keyword rule.
 
+> **History & Updates:** Nodes are modified in place. `content` always reflects current truth. When `content` is overwritten, the old value is prepended to `history STRING[]` as a human-readable entry (`"YYYY-MM-DD HH:MM - [narrative]"`), newest first. The new `content` must briefly acknowledge the prior state so the agent is hinted that something changed without needing to read `history`. `history` is only traversed when a query explicitly requires it.
+
 > **needs_clarification:** Every node type carries `needs_clarification BOOLEAN`. When set true, the node was created with one or more fields that could not be grounded in source text or vault data. An immediate push notification is sent to the user. The node is visible in the Memory Review Inbox until resolved. Alfred never guesses to fill a field — a confident wrong node is worse than an honest gap.
 
 ```sql
@@ -254,9 +259,11 @@ CREATE NODE TABLE Event (
     id STRING,
     name STRING,                    -- Canonical name: "SoTQ IEEE 2026"
     aliases STRING[],               -- ["sotq", "acara tadi", "event kemarin"]
-    content STRING,                 -- Alfred's narrative of what this event is/was
+    content STRING,                 -- Alfred's narrative of current state, written in Indonesian. Must acknowledge prior state if overwriting.
+    history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
     event_date TIMESTAMP,           -- Nullable if date unconfirmed
     status STRING,                  -- "planned" | "active" | "completed" | "cancelled" | "stale"
+    created_at TIMESTAMP,
     needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
@@ -266,11 +273,13 @@ CREATE NODE TABLE Task (
     id STRING,
     name STRING,                    -- Canonical short label
     aliases STRING[],               -- Alternative references in chat
-    content STRING,                 -- Full context: what, who, why
+    content STRING,                 -- Current state: what, who, why. Must acknowledge prior state if overwriting.
+    history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
     verbatim STRING,                -- Exact source text if wording itself is meaningful (nullable)
     due_date TIMESTAMP,             -- Nullable
     priority STRING,                -- "high" | "medium" | "low"
     status STRING,                  -- "active" | "completed" | "abandoned" | "stale"
+    created_at TIMESTAMP,
     needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
@@ -280,12 +289,14 @@ CREATE NODE TABLE Insight (
     id STRING,
     name STRING,                    -- Short label
     aliases STRING[],               -- Alternative phrasings observed in chat
-    content STRING,                 -- Full observational narrative, grounded in source text
+    content STRING,                 -- Current observational narrative, grounded in source text. Must acknowledge prior state if overwriting.
+    history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
     verbatim STRING,                -- Exact statement that triggered this insight (nullable)
     category STRING,                -- "personality" | "relationship_dynamic" | "preference" | "pattern"
     confidence STRING,              -- "high" | "medium" | "low"
     status STRING,                  -- "active" | "stale" | "contradicted"
     last_observed TIMESTAMP,
+    created_at TIMESTAMP,
     needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
@@ -297,6 +308,7 @@ CREATE NODE TABLE ConversationBlock (
     chat_id STRING,                 -- Which group/chat this block came from
     raw_transcript STRING,          -- Full message log including WAHA quote payloads, preserved as-is
     content STRING,                 -- Alfred's narrative summary, written after extraction
+    status STRING,                  -- "open" | "committed" | "abandoned"
     created_at TIMESTAMP,
     PRIMARY KEY (id)
 );
@@ -310,6 +322,8 @@ CREATE NODE TABLE Circle (
     name STRING,                    -- Canonical group name
     aliases STRING[],               -- Informal references to this group
     content STRING,                 -- Alfred's description of this group and its purpose
+    history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
+    created_at TIMESTAMP,
     needs_clarification BOOLEAN,
     PRIMARY KEY (id)
 );
@@ -396,42 +410,9 @@ CREATE REL TABLE SOURCED_FROM (
 );
 ```
 
-### Markdown Node Files (Human-Readable Layer)
-Every node in LadybugDB has a corresponding `.md` file on disk — a human-readable mirror used for manual review, Obsidian viewing, and rapid inspection. Files are written asynchronously via a buffered Go Channel (see Section 12) so disk I/O never blocks database operations.
-
-Each file uses Frontmatter and an inline `change_history` log to preserve temporal context:
-
-```yaml
----
-id: "insight_789"
-type: "Insight"
-category: "relationship_dynamic"
-title: "Bunga's tension with Bahlil"
-status: "resolved"
-created_at: "2026-06-12T20:40:00Z"
-last_observed: "2026-06-13T10:00:00Z"
-
-change_history:
-  - timestamp: "2026-06-12T20:40:00Z"
-    field: "status"
-    old_value: "N/A"
-    new_value: "active"
-    reason: "Created because Bahlil missed the presentation deadline."
-  - timestamp: "2026-06-13T10:00:00Z"
-    field: "status"
-    old_value: "active"
-    new_value: "resolved"
-    reason: "Bahlil sent the slides; Bunga confirmed they are good."
----
-
-# Narrative Summary (Stored in Indonesian)
-Awalnya terjadi ketegangan karena Bahlil lupa ngerjain tugas presentasi DPP...
-```
-
 ### Storage & Purging Strategy
 - **Raw WhatsApp Messages:** Retained for 30 days as a temporary recovery buffer, then purged.
 - **LadybugDB:** Permanent storage engine. Nodes are rarely deleted; bad data is the only deletion trigger.
-- **Markdown Node Files:** Synced human-readable views; permanent alongside the graph.
 
 #### Pre-Purge "Open Ends" Sweep
 On Day 30, before raw messages are deleted, the system runs a targeted sweep — **never** a blind audit of all expiring messages. Only `ConversationBlock` nodes still marked `status: open` or with a pending unassigned task are targeted. For these, the LLM writes a final historical narrative summary, marks the block `status: abandoned`, then deletes the raw text.
@@ -457,16 +438,22 @@ To prevent infinite loops and token drain:
 ### Edge Ranking (Preventing Hub Choking)
 Highly connected nodes (like yourself or core friends) will eventually accumulate thousands of edges. `get_surrounding_graph` never dumps raw data — the backend ranks adjacent nodes by combining **temporal recency** (`last_observed`) and **semantic similarity** to the original query, returning only the top 15.
 
+### Agent Write Access During Query Flow
+The agent can write during query flow via `update_node` and `upsert_reminder`. If the user instructs a change ("mark that done", "that was Rafid's task not mine"), the agent executes it directly using tooling — no separate update pipeline. Updates follow the same `content` → `history` mechanism as extraction updates.
+
 ### Full Agent Toolkit
 
 | Tool | Parameters | Output | Purpose |
 |---|---|---|---|
 | `search_nodes` | `keywords: string` | List of node IDs & titles | Entry point search using LadybugDB-native HNSW vector index |
 | `get_surrounding_graph` | `node_ids: list` | Top 15 ranked adjacent node IDs & edge types | Traversal map from current position |
-| `read_nodes` | `node_ids: list` | Array of full node data (JSON/Markdown) | Opens up to 5 nodes simultaneously |
+| `read_nodes` | `node_ids: list` | Array of full node data | Opens up to 5 nodes simultaneously |
 | `ask_user_for_hint` | `question: string` | Text response from user | Pauses loop and requests a clarifying clue |
 | `check_reminders` | `task_ref?: string` | List of existing reminder rows | Checks SQLite before inserting to prevent duplicates |
 | `upsert_reminder` | `message, deadline, status, task_ref?` | Confirmation | Inserts or updates a reminder row in SQLite |
+| `update_node` | `node_id: string, fields: map` | Confirmation | Updates fields on an existing node (status, content, due_date, etc). Moves old content to history. Used during query flow when user instructs a correction or status change. |
+
+> **Note:** Tool list is incomplete. Additional tools will be identified during implementation — particularly around node creation during query flow, edge manipulation, and reminder deletion.
 
 ---
 
@@ -522,6 +509,9 @@ Any reminder or node flagged `needs_clarification` is pushed to the user **immed
 
 ### Cascading Deletion
 If a Task node is deleted from LadybugDB (bad data), its associated reminder rows cascade-delete via `task_ref`.
+
+### Deadline Changes
+When a task's `due_date` changes, the agent calls `upsert_reminder` with the updated deadline. The unique index on `(task_ref, deadline)` handles this as a delete + insert. The old reminder row is replaced.
 
 ---
 
@@ -586,21 +576,14 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 - Cross-compile locally using multi-stage Docker builds matching the target VPS architecture
 - Deploy a pre-built static binary directly to the VPS
 
-### Non-Blocking Async Markdown Writes
-To ensure disk I/O never blocks database transactions or webhook responses:
-- When a node is updated in LadybugDB, a JSON payload is pushed to a buffered **Go Channel**
-- A background goroutine pulls from the channel and writes the updated Markdown file asynchronously
-
 ---
 
 ## 13. Open Questions
 
 ### ⚫ Critical Priority
 
-**~~Q1: Missing Content Field on Node Types~~** ✅ Resolved — See Decisions 50–58. Schema redesigned with unified `content STRING` across all non-Person node types, `needs_clarification BOOLEAN` on all types, `aliases STRING[]` on all types, and ConversationBlock now carries `raw_transcript STRING`. Person confirmed as pure identity anchor with no content body.
-
-**Q2: Memory Update & Modification Flow**
-The spec describes how nodes get created but not how they get updated when new information contradicts or extends existing memory. Undecided: when the extraction pipeline finds information relating to an existing node, does it overwrite, append, or version? Who writes to `change_history` — the agent during extraction or the user manually? What is the exact PWA mechanism for user corrections (Q2)? What happens to both nodes' content when Nightwatch merges two duplicates via the Memory Review Inbox?
+**Q1: Agentic Pipeline Specification**
+The turn-by-turn logic of both the query flow (user asks Alfred something) and the extraction flow (new conversation block committed) needs to be fully specced. What does the agent see at each turn, what does it decide, what tools does it call, in what order, and under what conditions does it terminate or escalate? This will surface missing tools and edge cases that can't be caught from the schema alone.
 
 ### 🔴 High Priority
 
@@ -629,10 +612,10 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 |---|---|---|---|
 | 1 | **No local vector models** | Squeezing vector models into 4GB RAM is a bottleneck. Free lightweight external APIs handle embeddings instead. | Jun 12, 2026 |
 | 2 | **Memory Review Inbox** | Low-confidence merges or conflicts are pushed to a user inbox rather than merged silently. Acts as a spaced-repetition system for the user's own life events. | Jun 12, 2026 |
-| 3 | **Link-by-Link Traversal Tooling** | No raw Cypher queries. The agent uses 4 strict tools for human-like graph navigation, avoiding syntax errors and hallucinated queries. | Jun 12, 2026 |
+| 3 | **Link-by-Link Traversal Tooling** | No raw Cypher queries. The agent uses a restricted set of tools for human-like graph navigation, avoiding syntax errors and hallucinated queries. Tool list is expected to grow during implementation. | Jun 12, 2026 |
 | 4 | **Stamina + Hard Cap Rule** | Base stamina 2-3 turns to fail fast. Warm leads grant +1. Hard cap at 5-6 prevents token drain and infinite loops. | Jun 12, 2026 |
 | 5 | **Insight Table (not Fact Table)** | "Facts" are too rigid. Insights capture qualitative values like character traits, vibes, shared memories, and emotional dynamics. | Jun 12, 2026 |
-| 6 | **Polymorphic Causality Edges** | Polymorphic `TRIGGERED_BY` REL tables allow any node to cause, link to, or influence any other node organically. | Jun 12, 2026 |
+| 6 | ~~**Polymorphic Causality Edges**~~ | ~~Polymorphic `TRIGGERED_BY` REL tables allow any node to cause, link to, or influence any other node organically.~~ Superseded by Decision 35. | Jun 12, 2026 |
 | 7 | **Pause on Webhook** | All background jobs must instantly yield when a new WAHA message arrives to avoid data hazards and DB locks. | Jun 12, 2026 |
 | 8 | **Edge Ranking in Traversal** | Adjacent nodes ranked by recency and semantic relevance, top 15 only. Prevents context choking on highly connected hub nodes. | Jun 12, 2026 |
 | 9 | **Indonesian Nodes, English Brain** | Node content stored in Indonesian to match real search terms. Agent reasoning done in English for stronger logical performance. | Jun 12, 2026 |
@@ -640,7 +623,7 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 11 | **Migrate to LadybugDB** | Apple's October 2025 acquisition of Kùzu Inc. and subsequent repo archiving makes Kuzu unmaintained. LadybugDB is the direct open-source successor. | Jun 12, 2026 |
 | 12 | **Golang Backend** | ~15MB idle RAM, fast, native goroutines for concurrent webhook handling, seamless CGO interop with LadybugDB. | Jun 12, 2026 |
 | 13 | **Cross-Compilation DevOps** | Compiling LadybugDB's C++ bindings natively on the VPS would OOM crash it. Compiled locally via multi-stage Docker, deployed as a static binary. | Jun 12, 2026 |
-| 14 | **Non-Blocking Async Markdown Writes** | Disk I/O writes offloaded to background goroutines via Go channels. Keeps database transactions and ingestion at peak speed. | Jun 12, 2026 |
+| 14 | ~~**Non-Blocking Async Markdown Writes**~~ | ~~Disk I/O writes offloaded to background goroutines via Go channels. Keeps database transactions and ingestion at peak speed.~~ Superseded by Decision 43 — markdown files cut entirely. | Jun 12, 2026 |
 | 15 | **The Alfred Persona** | Prevents token bloat and hallucinated therapist-speak. Loyal, dry, professional, ego-centric secretary voice. | Jun 12, 2026 |
 | 16 | **Pre-Purge Open Ends Sweep Only** | Never audit all expiring messages blindly. Only sweep unresolved open blocks on Day 30 to close them gracefully. | Jun 12, 2026 |
 | 17 | **Flutter → PWA** | Alfred is currently single-user; Flutter's build pipeline adds complexity with no gain at this stage. PWA covers all required features (push notifications, chat, observability, swipe inbox) and opens across all devices via URL. iOS dev burden avoided. PWA served as a static build from the Go backend. Multi-user architecture planned post-validation. | Jun 13, 2026 |
@@ -669,3 +652,8 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 40 | **Circle node type added** | Named groups of people with shared context ("BPH IEEE", "Divisi C&M", a manager's subordinates). Replaces the need for a separate Organization node. Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context (MEMBER_OF role field), not by schema encoding. | Jun 13, 2026 |
 | 41 | **verbatim STRING field on Task and Insight** | Quotes live inside nodes, not as separate node types. A Quote is never a navigation destination — it's supporting material. verbatim is populated only when exact wording carries meaning that Alfred's paraphrase would lose (explicit commitments, certificate numbers, strong direct statements). Nullable on all nodes that carry it. | Jun 13, 2026 |
 | 42 | **MEMBER_OF REL table added** | Person→Circle relationship with role STRING. Role ("kadiv", "manager", "staff") is what enables the agent to resolve speaker-scoped aliases — if Syazana is kadiv of a Circle, "anak gua" from Syazana resolves to that Circle's members. | Jun 13, 2026 |
+| 43 | **Markdown Node Files Cut** | Markdown files were a derived mirror of LadybugDB — not used by the agent, not used for search, only for human inspection. The PWA observability layer and graph itself serve that purpose. Pointless complexity removed entirely. | Jun 13, 2026 |
+| 44 | **Nodes Modified In Place, Not Versioned** | No duplicate nodes, no version chains. When new information updates a node, `content` is overwritten with the current truth. Old content is prepended to `history STRING[]` before overwrite. Graph stays clean; history is accessible without traversal. | Jun 13, 2026 |
+| 45 | **`history STRING[]` — Human-Readable Changelog** | Each history entry is a self-contained string: `"YYYY-MM-DD HH:MM - [narrative]"`. Newest entries prepended (index 0 = most recent). The LLM reads it like a changelog — no parsing, no parallel arrays, no extra schema. `history` is only read when the query explicitly requires it. | Jun 13, 2026 |
+| 46 | **`content` Must Self-Signal Change** | When overwriting `content`, the extraction pipeline (via skill.md template) must acknowledge the prior state in the new narrative. E.g. "Awalnya tugas ini milik Bahlil, sekarang dialihkan ke kamu." The agent reading `content` alone knows a change occurred without touching `history`. | Jun 13, 2026 |
+| 47 | **`created_at TIMESTAMP` Added to All Non-Person Node Types** | Enables temporal anchor queries ("what was the first task at X") without traversing history. `created_at` is set once at node creation and never updated. ConversationBlock already had it. Person excluded — identity anchor, no content lifecycle. | Jun 13, 2026 |
