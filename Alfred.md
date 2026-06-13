@@ -1,8 +1,8 @@
-# Alfred — Agentic Secretary AI
-### Project Specification
+# Alfred — Agentic Memory System
+### Architecture & Design Specification
 
 > **Status:** Planning / Pre-development
-> **Last updated:** June 13, 2026
+> **Last updated:** June 13, 2026 (revalidated)
 > **Stack:** Golang Backend · LadybugDB · SQLite · Groq API · WAHA (GOWS) · PWA Frontend · Ubuntu 24.04 VPS (4GB RAM / 8GB Storage)
 
 ---
@@ -28,6 +28,30 @@
 
 ## 1. Vision & Scope
 
+### The Real Thesis
+
+Most AI memory systems either ask you to manually log information, or they treat memory as a flat retrieval problem — embed everything, search by similarity, call it done. Alfred is neither.
+
+**The claim Alfred is built to prove:** an agent can maintain a coherent, temporally-aware, self-correcting knowledge graph from noisy, informal, multilingual conversational data — without any user curation. Not just storing what you said, but knowing *when you said it*, *whether it's still true*, *how confident to be*, and *how things connect to each other*.
+
+The secretary framing is the test case, not the product. WhatsApp group chats are the data source because real data is messy — informal language, implicit references, contradictions, half-finished thoughts, Indonesian slang mid-sentence. If the memory model holds up there, it holds up anywhere.
+
+### The Concrete Problem
+
+The specific failure mode Alfred is built to solve has two distinct forms:
+
+**Missing** — a message comes in while you're busy, you skim it, you don't register that it contained an obligation directed at you. The information never entered your head. This is the harder case: Alfred must catch what you didn't.
+
+**Forgetting** — you saw it, you knew you had to do something, it got buried, and it fell out of working memory before you acted. Alfred must surface it before the deadline passes.
+
+Both failures are common in group chats where obligations are often implicit, informally phrased, or directed at you without your name being mentioned. Alfred's proactive push — surfacing `needs_clarification` flags and deadline reminders without being asked — is the most important feature in the system. The knowledge graph and traversal system exist to make those pushes accurate.
+
+### Design Philosophy: Honest Gap Over Confident Wrong
+
+Alfred is explicitly designed to keep the user in the loop rather than quietly automate their judgment away. When the extraction pipeline cannot attribute a task with sufficient confidence, it creates a partial node flagged `needs_clarification` and pushes it to the user immediately. It never guesses.
+
+This is intentional. A real secretary surfaces ambiguous obligations and asks — they don't silently assign them to the wrong person. The volume of `needs_clarification` flags is not a failure metric; it is an accurate reflection of how ambiguous group chat obligations actually are. The user decides. Alfred catches and presents.
+
 Alfred is an **agentic secretary AI** that passively watches your conversations — starting with WhatsApp — and turns raw chat into a **living, temporal memory system**. It is not a chat archive. It is a structured knowledge graph that grows over time and can be queried naturally.
 
 ### What Alfred Does
@@ -41,7 +65,7 @@ Alfred is an **agentic secretary AI** that passively watches your conversations 
 - **Explain its reasoning** — all agent actions, tool calls, and traversal steps are visible and auditable
 
 ### Analogy
-A personal knowledge base managed by a secretary who reads every conversation, takes smart notes, and knows how to answer your questions without you having to dig through old messages.
+Not just a smart notes app. Alfred is closer to a personal epistemics engine — something that knows not just *what* you know, but *when you learned it*, *whether it's still true*, and *how confident to be*. The secretary is the interface. The knowledge graph is the point.
 
 ### Current Scope
 - **Single user** (multi-user architecture planned post-validation)
@@ -603,45 +627,45 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 
 | # | Decision | Rationale | Date |
 |---|---|---|---|
-| 20 | **No local vector models** | Squeezing vector models into 4GB RAM is a bottleneck. Free lightweight external APIs handle embeddings instead. | Jun 12, 2026 |
-| 21 | **Memory Review Inbox** | Low-confidence merges or conflicts are pushed to a user inbox rather than merged silently. Acts as a spaced-repetition system for the user's own life events. | Jun 12, 2026 |
-| 22 | **Link-by-Link Traversal Tooling** | No raw Cypher queries. The agent uses 4 strict tools for human-like graph navigation, avoiding syntax errors and hallucinated queries. | Jun 12, 2026 |
-| 23 | **Stamina + Hard Cap Rule** | Base stamina 2-3 turns to fail fast. Warm leads grant +1. Hard cap at 5-6 prevents token drain and infinite loops. | Jun 12, 2026 |
-| 24 | **Insight Table (not Fact Table)** | "Facts" are too rigid. Insights capture qualitative values like character traits, vibes, shared memories, and emotional dynamics. | Jun 12, 2026 |
-| 25 | **Polymorphic Causality Edges** | Polymorphic `TRIGGERED_BY` REL tables allow any node to cause, link to, or influence any other node organically. | Jun 12, 2026 |
-| 26 | **Pause on Webhook** | All background jobs must instantly yield when a new WAHA message arrives to avoid data hazards and DB locks. | Jun 12, 2026 |
-| 27 | **Edge Ranking in Traversal** | Adjacent nodes ranked by recency and semantic relevance, top 15 only. Prevents context choking on highly connected hub nodes. | Jun 12, 2026 |
-| 28 | **Indonesian Nodes, English Brain** | Node content stored in Indonesian to match real search terms. Agent reasoning done in English for stronger logical performance. | Jun 12, 2026 |
-| 29 | **UUIDs + Semantic Identity Resolution** | Raw JIDs discarded as keys due to `@lid` mutation risk. Stable UUIDs used; incoming senders matched via fuzzy semantic matching. | Jun 12, 2026 |
-| 30 | **Migrate to LadybugDB** | Apple's October 2025 acquisition of Kùzu Inc. and subsequent repo archiving makes Kuzu unmaintained. LadybugDB is the direct open-source successor. | Jun 12, 2026 |
-| 31 | **Golang Backend** | ~15MB idle RAM, fast, native goroutines for concurrent webhook handling, seamless CGO interop with LadybugDB. | Jun 12, 2026 |
-| 32 | **Cross-Compilation DevOps** | Compiling LadybugDB's C++ bindings natively on the VPS would OOM crash it. Compiled locally via multi-stage Docker, deployed as a static binary. | Jun 12, 2026 |
-| 33 | **Non-Blocking Async Markdown Writes** | Disk I/O writes offloaded to background goroutines via Go channels. Keeps database transactions and ingestion at peak speed. | Jun 12, 2026 |
-| 34 | **The Alfred Persona** | Prevents token bloat and hallucinated therapist-speak. Loyal, dry, professional, ego-centric secretary voice. | Jun 12, 2026 |
-| 35 | **Pre-Purge Open Ends Sweep Only** | Never audit all expiring messages blindly. Only sweep unresolved open blocks on Day 30 to close them gracefully. | Jun 12, 2026 |
-| 36 | **Flutter → PWA** | Alfred is currently single-user; Flutter's build pipeline adds complexity with no gain at this stage. PWA covers all required features (push notifications, chat, observability, swipe inbox) and opens across all devices via URL. iOS dev burden avoided. PWA served as a static build from the Go backend. Multi-user architecture planned post-validation. | Jun 13, 2026 |
-| 37 | **JWT Credential Gate** | PWA is browser-accessible via URL — a security gate is required. JWT login screen before anything renders. No session persistence. Security barrier only, not a user management system. Chosen over Basic Auth for cleaner future multi-user extensibility. | Jun 13, 2026 |
-| 38 | **SQLite for Reminder Storage** | Reminders are operational/transient data, not knowledge. Storing as LadybugDB nodes would overlap with Task nodes. SQLite is a single file, no server process, concurrent-safe. Chosen over JSON file for concurrency safety and native query support. | Jun 13, 2026 |
-| 39 | **Reminders Owned by Main Agent, Not Nightwatch** | Nightwatch is database maintenance only. Reminder creation is a side effect of extraction and query flows — the agent has the context to decide what is reminder-worthy. | Jun 13, 2026 |
-| 40 | **Dumb Cron for Reminder Dispatch** | The cron that fires push notifications is intentionally LLM-free. Pure deadline scanner: query SQLite, fire push notif, mark sent. LLM only involved upstream (writing reminders) and downstream if clarification needed. | Jun 13, 2026 |
-| 41 | **Immediate Push on needs_clarification** | Anything flagged needs_clarification is pushed to the user immediately upon commit, not queued for the cron. Applies system-wide. | Jun 13, 2026 |
-| 42 | **Prompt Caching** | System prompt is long and resent on every LLM call including every traversal loop turn. Groq prompt caching halves input token costs on repeated prefixes and cached tokens don't count toward rate limits. Must be enabled on all extraction and traversal calls. | Jun 13, 2026 |
-| 43 | **Two-Phase Extraction: Extract then Link** | Extraction (reading the conversation) and linking (reading the graph) are cognitively distinct tasks. Phase 1 reads the committed block + prior block summary, outputs candidate nodes with no graph access. Phase 2 traverses the vault to dedup and link. Conflating both in one prompt degrades quality on both. | Jun 13, 2026 |
-| 44 | **Explicit Keyword Linking Only** | Nodes are only linked if the source text explicitly mentions or references the target node by name or alias. No implicit linking based on the LLM's background knowledge (e.g. two people both being from IEEE is not sufficient to link a node to the IEEE organisation). Every edge must be justifiable from the node's own content. | Jun 13, 2026 |
-| 45 | **Aliases as First-Class Concept Across All Node Types** | Aliases are not just a Person concern. Events, Tasks, and other nodes are referred to informally in Indonesian chat ("rapat tadi", "meeting kemarin"). The linking agent in Phase 2 must search against aliases, not just canonical names, otherwise the explicit keyword rule breaks on informal language. Schema redesign required. | Jun 13, 2026 |
-| 46 | **Ambiguous Extractions Always Fail to needs_clarification** | When the extraction pipeline cannot resolve context (e.g. a payment task with no stated reason), it creates a partial node flagged needs_clarification and triggers an immediate push to the user. It never guesses or silently creates incomplete nodes. | Jun 13, 2026 |
-| 47 | **WAHA Quote Payload Preserved in ConversationBlock** | WhatsApp reply-to metadata (the quoted message) is load-bearing for correct extraction. "2" as a reply to "maap yah gereja" is a non-commitment; without the quote context it could be misread as volunteering. The quote payload from WAHA must be preserved in the ConversationBlock transcript, not stripped before LLM processing. | Jun 13, 2026 |
-| 48 | **Relevance Filter: BPH Perspective** | Alfred extracts for the owner as an IEEE BPH member. Multi-node commits are allowed but each node is evaluated independently against this relevance filter. Organisational events and tasks are likely relevant even when the owner is not explicitly named, given the group chat context. | Jun 13, 2026 |
-| 49 | **Phase 2 Linking: Search Aliases + Explicit Match** | The Phase 2 linking agent searches the vault for candidate nodes sharing explicit keywords (including aliases) with the new node. A link is created only if the new node's content directly references the candidate. Semantic similarity alone is insufficient — the match must be grounded in the text. | Jun 13, 2026 |
-| 50 | **Person is a Pure Identity Anchor** | Person node holds only identity fields: name, aliases, phone_number, is_self, needs_clarification. No content body, no bio, no cached summary. A person's substance is their surrounding subgraph. Denormalized caches (bio fields) break graph atomicity and create dual-source-of-truth problems. | Jun 13, 2026 |
-| 51 | **Unified content STRING replaces scattered summary fields** | All node types except Person carry a single `content STRING` field — Alfred's dry Indonesian narrative of what the node represents. Replaces the inconsistent `summary` fields on Event, Task, Insight, ConversationBlock. ConversationBlock additionally carries `raw_transcript STRING` for the unprocessed message log. | Jun 13, 2026 |
-| 52 | **needs_clarification is first-class on all node types** | Any field that cannot be grounded in source text or vault data is left null and `needs_clarification` set true. Never inferred or guessed. Triggers immediate push to user and surfaces in Memory Review Inbox. A confident wrong node is worse than an honest gap. | Jun 13, 2026 |
-| 53 | **aliases STRING[] on all node types** | Informal references ("rapat tadi", "sotq", "event kemarin") must be searchable by the Phase 2 linking agent. Aliases are not just a Person concern — Events, Tasks, and Insights are referenced informally in Indonesian chat. | Jun 13, 2026 |
-| 54 | **TRIGGERED_BY split into CAUSED_BY, EVIDENCED_BY, CONTRADICTS** | TRIGGERED_BY was semantically overloaded across causality, evidence, and contradiction. Split into three typed REL tables so the pointer fan-out strategy can follow specific edge types deliberately. CONTRADICTS is Nightwatch-only — never written by the extraction pipeline. | Jun 13, 2026 |
-| 55 | **PARTICIPANT_IN carries role STRING** | Participation alone is insufficient. Rafid had "sambutan" role at SoTQ — this is meaningfully different from a regular attendee. Role is nullable for general participation. | Jun 13, 2026 |
-| 56 | **KNOWS REL table added for Person→Person** | Structural relationship descriptor between people. Captures role/closeness ("teman dekat", "senior", "rekan") and context ("IEEE BPH", "kuliah"). Behavioral dynamics live in Insights, not on this edge. Descriptor uses canonical vocabulary from skill.md but is not a hard enum. | Jun 13, 2026 |
-| 57 | **Event status replaces is_confirmed BOOLEAN** | Boolean is too coarse. Real events are planned, active, completed, cancelled, or stale — not just confirmed/unconfirmed. Status enum: "planned" | "active" | "completed" | "cancelled" | "stale". | Jun 13, 2026 |
-| 58 | **ConversationBlock stores raw_transcript** | Raw message log including WAHA quote payloads must be preserved on the node, not stripped before LLM processing. Quote payloads are load-bearing for correct reply-chain interpretation. content field holds Alfred's post-extraction summary. | Jun 13, 2026 |
-| 59 | **Circle node type added** | Named groups of people with shared context ("BPH IEEE", "Divisi C&M", a manager's subordinates). Replaces the need for a separate Organization node. Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context (MEMBER_OF role field), not by schema encoding. | Jun 13, 2026 |
-| 60 | **verbatim STRING field on Task and Insight** | Quotes live inside nodes, not as separate node types. A Quote is never a navigation destination — it's supporting material. verbatim is populated only when exact wording carries meaning that Alfred's paraphrase would lose (explicit commitments, certificate numbers, strong direct statements). Nullable on all nodes that carry it. | Jun 13, 2026 |
-| 61 | **MEMBER_OF REL table added** | Person→Circle relationship with role STRING. Role ("kadiv", "manager", "staff") is what enables the agent to resolve speaker-scoped aliases — if Syazana is kadiv of a Circle, "anak gua" from Syazana resolves to that Circle's members. | Jun 13, 2026 |
+| 1 | **No local vector models** | Squeezing vector models into 4GB RAM is a bottleneck. Free lightweight external APIs handle embeddings instead. | Jun 12, 2026 |
+| 2 | **Memory Review Inbox** | Low-confidence merges or conflicts are pushed to a user inbox rather than merged silently. Acts as a spaced-repetition system for the user's own life events. | Jun 12, 2026 |
+| 3 | **Link-by-Link Traversal Tooling** | No raw Cypher queries. The agent uses 4 strict tools for human-like graph navigation, avoiding syntax errors and hallucinated queries. | Jun 12, 2026 |
+| 4 | **Stamina + Hard Cap Rule** | Base stamina 2-3 turns to fail fast. Warm leads grant +1. Hard cap at 5-6 prevents token drain and infinite loops. | Jun 12, 2026 |
+| 5 | **Insight Table (not Fact Table)** | "Facts" are too rigid. Insights capture qualitative values like character traits, vibes, shared memories, and emotional dynamics. | Jun 12, 2026 |
+| 6 | **Polymorphic Causality Edges** | Polymorphic `TRIGGERED_BY` REL tables allow any node to cause, link to, or influence any other node organically. | Jun 12, 2026 |
+| 7 | **Pause on Webhook** | All background jobs must instantly yield when a new WAHA message arrives to avoid data hazards and DB locks. | Jun 12, 2026 |
+| 8 | **Edge Ranking in Traversal** | Adjacent nodes ranked by recency and semantic relevance, top 15 only. Prevents context choking on highly connected hub nodes. | Jun 12, 2026 |
+| 9 | **Indonesian Nodes, English Brain** | Node content stored in Indonesian to match real search terms. Agent reasoning done in English for stronger logical performance. | Jun 12, 2026 |
+| 10 | **UUIDs + Semantic Identity Resolution** | Raw JIDs discarded as keys due to `@lid` mutation risk. Stable UUIDs used; incoming senders matched via fuzzy semantic matching. | Jun 12, 2026 |
+| 11 | **Migrate to LadybugDB** | Apple's October 2025 acquisition of Kùzu Inc. and subsequent repo archiving makes Kuzu unmaintained. LadybugDB is the direct open-source successor. | Jun 12, 2026 |
+| 12 | **Golang Backend** | ~15MB idle RAM, fast, native goroutines for concurrent webhook handling, seamless CGO interop with LadybugDB. | Jun 12, 2026 |
+| 13 | **Cross-Compilation DevOps** | Compiling LadybugDB's C++ bindings natively on the VPS would OOM crash it. Compiled locally via multi-stage Docker, deployed as a static binary. | Jun 12, 2026 |
+| 14 | **Non-Blocking Async Markdown Writes** | Disk I/O writes offloaded to background goroutines via Go channels. Keeps database transactions and ingestion at peak speed. | Jun 12, 2026 |
+| 15 | **The Alfred Persona** | Prevents token bloat and hallucinated therapist-speak. Loyal, dry, professional, ego-centric secretary voice. | Jun 12, 2026 |
+| 16 | **Pre-Purge Open Ends Sweep Only** | Never audit all expiring messages blindly. Only sweep unresolved open blocks on Day 30 to close them gracefully. | Jun 12, 2026 |
+| 17 | **Flutter → PWA** | Alfred is currently single-user; Flutter's build pipeline adds complexity with no gain at this stage. PWA covers all required features (push notifications, chat, observability, swipe inbox) and opens across all devices via URL. iOS dev burden avoided. PWA served as a static build from the Go backend. Multi-user architecture planned post-validation. | Jun 13, 2026 |
+| 18 | **JWT Credential Gate** | PWA is browser-accessible via URL — a security gate is required. JWT login screen before anything renders. No session persistence. Security barrier only, not a user management system. Chosen over Basic Auth for cleaner future multi-user extensibility. | Jun 13, 2026 |
+| 19 | **SQLite for Reminder Storage** | Reminders are operational/transient data, not knowledge. Storing as LadybugDB nodes would overlap with Task nodes. SQLite is a single file, no server process, concurrent-safe. Chosen over JSON file for concurrency safety and native query support. | Jun 13, 2026 |
+| 20 | **Reminders Owned by Main Agent, Not Nightwatch** | Nightwatch is database maintenance only. Reminder creation is a side effect of extraction and query flows — the agent has the context to decide what is reminder-worthy. | Jun 13, 2026 |
+| 21 | **Dumb Cron for Reminder Dispatch** | The cron that fires push notifications is intentionally LLM-free. Pure deadline scanner: query SQLite, fire push notif, mark sent. LLM only involved upstream (writing reminders) and downstream if clarification needed. | Jun 13, 2026 |
+| 22 | **Immediate Push on needs_clarification** | Anything flagged needs_clarification is pushed to the user immediately upon commit, not queued for the cron. Applies system-wide. | Jun 13, 2026 |
+| 23 | **Prompt Caching** | System prompt is long and resent on every LLM call including every traversal loop turn. Groq prompt caching halves input token costs on repeated prefixes and cached tokens don't count toward rate limits. Must be enabled on all extraction and traversal calls. | Jun 13, 2026 |
+| 24 | **Two-Phase Extraction: Extract then Link** | Extraction (reading the conversation) and linking (reading the graph) are cognitively distinct tasks. Phase 1 reads the committed block + prior block summary, outputs candidate nodes with no graph access. Phase 2 traverses the vault to dedup and link. Conflating both in one prompt degrades quality on both. | Jun 13, 2026 |
+| 25 | **Explicit Keyword Linking Only** | Nodes are only linked if the source text explicitly mentions or references the target node by name or alias. No implicit linking based on the LLM's background knowledge (e.g. two people both being from IEEE is not sufficient to link a node to the IEEE organisation). Every edge must be justifiable from the node's own content. | Jun 13, 2026 |
+| 26 | **Aliases as First-Class Concept Across All Node Types** | Aliases are not just a Person concern. Events, Tasks, and other nodes are referred to informally in Indonesian chat ("rapat tadi", "meeting kemarin"). The linking agent in Phase 2 must search against aliases, not just canonical names, otherwise the explicit keyword rule breaks on informal language. Schema redesign required. | Jun 13, 2026 |
+| 27 | **Ambiguous Extractions Always Fail to needs_clarification** | When the extraction pipeline cannot resolve context (e.g. a payment task with no stated reason), it creates a partial node flagged needs_clarification and triggers an immediate push to the user. It never guesses or silently creates incomplete nodes. | Jun 13, 2026 |
+| 28 | **WAHA Quote Payload Preserved in ConversationBlock** | WhatsApp reply-to metadata (the quoted message) is load-bearing for correct extraction. "2" as a reply to "maap yah gereja" is a non-commitment; without the quote context it could be misread as volunteering. The quote payload from WAHA must be preserved in the ConversationBlock transcript, not stripped before LLM processing. | Jun 13, 2026 |
+| 29 | **Relevance Filter: BPH Perspective** | Alfred extracts for the owner as an IEEE BPH member. Multi-node commits are allowed but each node is evaluated independently against this relevance filter. Organisational events and tasks are likely relevant even when the owner is not explicitly named, given the group chat context. | Jun 13, 2026 |
+| 30 | **Phase 2 Linking: Search Aliases + Explicit Match** | The Phase 2 linking agent searches the vault for candidate nodes sharing explicit keywords (including aliases) with the new node. A link is created only if the new node's content directly references the candidate. Semantic similarity alone is insufficient — the match must be grounded in the text. | Jun 13, 2026 |
+| 31 | **Person is a Pure Identity Anchor** | Person node holds only identity fields: name, aliases, phone_number, is_self, needs_clarification. No content body, no bio, no cached summary. A person's substance is their surrounding subgraph. Denormalized caches (bio fields) break graph atomicity and create dual-source-of-truth problems. | Jun 13, 2026 |
+| 32 | **Unified content STRING replaces scattered summary fields** | All node types except Person carry a single `content STRING` field — Alfred's dry Indonesian narrative of what the node represents. Replaces the inconsistent `summary` fields on Event, Task, Insight, ConversationBlock. ConversationBlock additionally carries `raw_transcript STRING` for the unprocessed message log. | Jun 13, 2026 |
+| 33 | **needs_clarification is first-class on all node types** | Any field that cannot be grounded in source text or vault data is left null and `needs_clarification` set true. Never inferred or guessed. Triggers immediate push to user and surfaces in Memory Review Inbox. A confident wrong node is worse than an honest gap. | Jun 13, 2026 |
+| 34 | **aliases STRING[] on all node types** | Informal references ("rapat tadi", "sotq", "event kemarin") must be searchable by the Phase 2 linking agent. Aliases are not just a Person concern — Events, Tasks, and Insights are referenced informally in Indonesian chat. | Jun 13, 2026 |
+| 35 | **TRIGGERED_BY split into CAUSED_BY, EVIDENCED_BY, CONTRADICTS** | TRIGGERED_BY was semantically overloaded across causality, evidence, and contradiction. Split into three typed REL tables so the pointer fan-out strategy can follow specific edge types deliberately. CONTRADICTS is Nightwatch-only — never written by the extraction pipeline. | Jun 13, 2026 |
+| 36 | **PARTICIPANT_IN carries role STRING** | Participation alone is insufficient. Rafid had "sambutan" role at SoTQ — this is meaningfully different from a regular attendee. Role is nullable for general participation. | Jun 13, 2026 |
+| 37 | **KNOWS REL table added for Person→Person** | Structural relationship descriptor between people. Captures role/closeness ("teman dekat", "senior", "rekan") and context ("IEEE BPH", "kuliah"). Behavioral dynamics live in Insights, not on this edge. Descriptor uses canonical vocabulary from skill.md but is not a hard enum. | Jun 13, 2026 |
+| 38 | **Event status replaces is_confirmed BOOLEAN** | Boolean is too coarse. Real events are planned, active, completed, cancelled, or stale — not just confirmed/unconfirmed. Status enum: "planned" \| "active" \| "completed" \| "cancelled" \| "stale". | Jun 13, 2026 |
+| 39 | **ConversationBlock stores raw_transcript** | Raw message log including WAHA quote payloads must be preserved on the node, not stripped before LLM processing. Quote payloads are load-bearing for correct reply-chain interpretation. content field holds Alfred's post-extraction summary. | Jun 13, 2026 |
+| 40 | **Circle node type added** | Named groups of people with shared context ("BPH IEEE", "Divisi C&M", a manager's subordinates). Replaces the need for a separate Organization node. Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context (MEMBER_OF role field), not by schema encoding. | Jun 13, 2026 |
+| 41 | **verbatim STRING field on Task and Insight** | Quotes live inside nodes, not as separate node types. A Quote is never a navigation destination — it's supporting material. verbatim is populated only when exact wording carries meaning that Alfred's paraphrase would lose (explicit commitments, certificate numbers, strong direct statements). Nullable on all nodes that carry it. | Jun 13, 2026 |
+| 42 | **MEMBER_OF REL table added** | Person→Circle relationship with role STRING. Role ("kadiv", "manager", "staff") is what enables the agent to resolve speaker-scoped aliases — if Syazana is kadiv of a Circle, "anak gua" from Syazana resolves to that Circle's members. | Jun 13, 2026 |
