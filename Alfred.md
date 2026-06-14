@@ -118,13 +118,17 @@ Not just a smart notes app. Alfred is closer to a personal epistemics engine - s
                              │ 
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              AGENTIC TOOLING LAYER (TRAVERSAL)              │
-│   Custom tools: search_nodes, get_surrounding_graph,        │
-│                 read_nodes, ask_user_for_hint,              │
+│            AGENTIC QUERY LAYER (HYBRID GRAPHRAG)            │
+│   query_rag(query, top_k?, hops?) -> subgraph               │
+│     stages: embed, vector search (HNSW), graph              │
+│     expand (1-2 hops), RRF fusion, PageRank                 │
+│   Other tools: ask_user_for_hint,                           │
 │                 check_reminders, upsert_reminder,           │
 │                 update_node (+ more TBD)                    │
-│   LLM decides which tools to call; Go backend executes      │
-│   Uses dynamic stamina (base 2-3) + hard cap (5-6)          │
+│   LLM decides which tools to call; Go executes              │
+│   No stamina/hard cap - query_rag auto-runs at              │
+│   query start; agent re-queries or writes as                │
+│   needed mid-reasoning                                      │
 └────────────────────────────┬────────────────────────────────┘
                              │
               ┌──────────────┴──────────────┐
@@ -142,7 +146,7 @@ Not just a smart notes app. Alfred is closer to a personal epistemics engine - s
 2. After a silence window, the block is committed → sent to the LLM extraction pipeline
 3. The LLM extracts structured nodes (people, tasks, events, insights) → written to LadybugDB
 4. The agent also writes reminder rows to SQLite for any deadline-bearing tasks
-5. The user queries Alfred via the PWA chat → the agent traverses the graph using tools
+5. The user queries Alfred via the PWA chat → `query_rag` runs (Hybrid GraphRAG) and the agent reasons over the returned subgraph, re-querying or writing as needed
 6. A dumb cron job scans SQLite and fires push notifications for upcoming reminders
 7. Nightwatch (background agent) runs nightly to merge duplicates and flag stale data
 
@@ -218,7 +222,7 @@ The same event (e.g. SoTQ) may be referenced across many blocks over time. Phase
 Groq is the primary inference provider. If a call fails, the system walks down a prioritized list of fallback model APIs in a try/catch loop until one succeeds.
 
 ### Prompt Caching
-Alfred's system prompt is long and resent on every API call - including every turn of the agentic traversal loop (up to 5-6 turns per query). Groq's prompt caching halves input token costs on repeated prompt prefixes and does not count cached tokens toward rate limits. Prompt caching must be enabled on all extraction and traversal calls.
+Alfred's system prompt is long and resent on every API call - including every agent reasoning turn during query flow (the auto-called `query_rag`, plus however many re-queries, writes, or hint requests the agent makes; no fixed turn cap under Hybrid GraphRAG). Groq's prompt caching halves input token costs on repeated prompt prefixes and does not count cached tokens toward rate limits. Prompt caching must be enabled on all extraction and query-flow calls.
 
 ---
 
@@ -430,10 +434,17 @@ The pattern is ported from [`Volland/ladybug-rag`](https://github.com/Volland/la
 
 1. **Embed the query** — HTTP call to the pinned embedding API (same model used at write time)
 2. **Vector search** — `QUERY_VECTOR_INDEX` Cypher query returns top-K semantically similar nodes (HNSW)
-3. **Graph expand** — second Cypher query follows edges 1-2 hops from vector hits, using LadybugDB's native graph traversal
-4. **RRF fusion + PageRank ranking** — ~20 lines of Go math merges both ranked lists; PageRank weights structurally important nodes higher regardless of recency
+3. **Graph expand** — second Cypher query follows edges 1-2 hops from vector hits, using LadybugDB's native graph traversal. The traversed edges (type, direction, properties) are carried through, not discarded.
+4. **RRF fusion + PageRank ranking** — ~20 lines of Go math merges both ranked lists; PageRank weights structurally important nodes higher regardless of recency. If an edge connects two nodes where one endpoint falls outside the final ranked set, the edge is dropped along with it rather than left dangling.
 
 The pipeline is exposed to the agent as a callable tool (`query_rag`) with configurable `top_k` and `hops` parameters. It runs automatically on query start with default params, but the agent can call it again mid-reasoning with different params if the initial context is insufficient — e.g. a narrower query string, deeper hop expansion, or larger `top_k`. No stamina system, no hard cap, no multi-turn traversal loop.
+
+### query_rag Output Shape
+`query_rag` returns a **subgraph**, not a flat node list: `{ nodes: [...], edges: [...] }`.
+- Every node carries at minimum `id`, `node_type`, and its schema fields (`content`, `name`, `aliases`, status fields, etc.) — `id` and `node_type` are the handles every write tool keys off.
+- Every edge carries `from_id`, `to_id`, `rel_type`, and direction, plus any edge-only properties (`PARTICIPANT_IN.role`, `KNOWS.descriptor`/`context`, `MEMBER_OF.role`, `CAUSED_BY.created_at`, etc.) — this is metadata that lives only on the relationship and has nowhere else to surface.
+
+This preserves the structural context that the old manual traversal loop made explicit step-by-step, and gives any future relationship-editing tool the edge identity it needs to act.
 
 ### Agent Write Access During Query Flow
 The agent can write during query flow. If the user instructs a change ("mark that done", "that was Rafid's task not mine"), the agent executes it directly via tools — no separate update pipeline. Updates follow the same `content` → `history` mechanism as extraction updates.
@@ -447,7 +458,7 @@ BM25 full-text search via LadybugDB's native extension is used for alias matchin
 
 | Tool | Parameters | Output | Purpose |
 |---|---|---|---|
-| `query_rag` | `query: string, top_k?: int, hops?: int` | Ranked list of nodes with context | Runs the full Hybrid GraphRAG pipeline (embed → vector search → graph expand → RRF + PageRank) with custom params. Called once automatically at query start; agent can call again mid-reasoning if initial context is insufficient (e.g. narrower scope, deeper hop depth, different query framing). |
+| `query_rag` | `query: string, top_k?: int, hops?: int` | Subgraph: `{ nodes: [...with id, node_type], edges: [...with from_id, to_id, rel_type, properties] }` | Runs the full Hybrid GraphRAG pipeline (embed → vector search → graph expand → RRF + PageRank) with custom params. Called once automatically at query start; agent can call again mid-reasoning if initial context is insufficient (e.g. narrower scope, deeper hop depth, different query framing). |
 | `ask_user_for_hint` | `question: string` | Text response from user | Fires when RAG context is insufficient and re-querying wouldn't help. Requests a clarifying clue from the user. |
 | `check_reminders` | `task_ref?: string` | List of existing reminder rows | Checks SQLite before inserting to prevent duplicates. |
 | `upsert_reminder` | `message, deadline, status, task_ref?` | Confirmation | Inserts or updates a reminder row in SQLite. |
@@ -538,15 +549,13 @@ A separate, LLM-free cron job responsible only for scanning SQLite and dispatchi
 A JWT credential gate loads before the PWA renders anything. The user provides a username and password; the Go backend validates and returns a JWT which the PWA holds in memory and attaches to all subsequent API requests. No session persistence - re-login on refresh is acceptable. This is a security barrier only, not a user management system.
 
 ### Chat Interface
-Natural language Q&A with Alfred's memory. The user types a question; the agent runs the traversal loop and responds in Alfred's persona.
+Natural language Q&A with Alfred's memory. The user types a question; the agent runs the Hybrid GraphRAG query flow (`query_rag` auto-called, agent reasons over the returned subgraph, re-queries or writes if needed) and responds in Alfred's persona.
 
 ### Observability Layer
 An interactive debug log inside the chat view (similar to Claude's "thinking" blocks). The user can expand a dropdown during or after a query to watch the agent's exact step-by-step journey:
-- *Thought: "I need to look for Bahlil."*
-- *Tool Call: search_nodes("Bahlil")*
-- *Tool Call: get_surrounding_graph(["rez_123"])*
-- *Thought: "I see a task related to Bunga. Let me read that."*
-- *Tool Call: read_nodes(["task_456"])*
+- *Tool Call: query_rag("Bahlil tugas Bunga")* → subgraph with `Task[bahlil_task]`, `Person[bahlil]`, `Person[bunga]`, edge `ASSIGNED_TO(bahlil_task -> bahlil)`
+- *Thought: "This task is about Bunga's event, currently assigned to Bahlil."*
+- *Tool Call: update_node(task_id="bahlil_task", fields={status: "completed"})*
 
 ### Memory Review Inbox
 A Tinder-style swipe interface. When Nightwatch finds potentially duplicate or conflicting nodes, it pushes them here rather than merging silently. The user taps to merge or swipes to keep separate. This doubles as a spaced-repetition system for the user's own life events.
@@ -595,11 +604,12 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 - Build HNSW vector index
 - Hybrid retrieval: vector search (`QUERY_VECTOR_INDEX`) + Cypher graph expand (1-2 hops) + RRF fusion (~20 lines of Go math) + PageRank weighting
 - Pass ranked context to LLM, get answer back
+- **Concurrent connection lifecycle stress test** - `go-ladybug` issue #7 documented a real Cgo/GC race (finalizer destroys a `QueryResult` while another goroutine is still reading a derived `FlatTuple` via Cgo → SIGSEGV), fixed by requiring explicit `Close()` rather than relying on the GC. Phase 0 must simulate Alfred's actual access pattern - multiple goroutines (webhook handler, background job, query flow) hitting the same `.lbug` file concurrently, each with disciplined explicit `Close()` on every `Connection`/`QueryResult` - to confirm this doesn't resurface under load.
 - Nothing else — no WhatsApp, no extraction pipeline, no Alfred persona
 
-**Reference:** Python implementation at [`Volland/ladybug-rag`](https://github.com/Volland/ladybug-rag) (~300 lines). Read this first, port to Go, validate it produces equivalent results.
+**Reference:** Python implementation at [`Volland/ladybug-rag`](https://github.com/Volland/ladybug-rag) (~300 lines). Read this first, port to Go, validate it produces equivalent results. Note the reference also includes entity extraction, Louvain community detection, and KNN `SIMILAR` edges - Alfred's port deliberately excludes these (extraction is handled by Alfred's own pipeline; community detection has no current consumer and is deferred until Nightwatch needs it).
 
-**Done when:** A Go binary can ingest a handful of test documents, build the graph, run a hybrid query, and return a correctly-ranked context to an LLM. Package is clean enough to extract as a standalone library later.
+**Done when:** A Go binary can ingest a handful of test documents, build the graph, run a hybrid query, return a correctly-ranked context to an LLM, and survive the concurrent connection stress test without crashing. Package is clean enough to extract as a standalone library later.
 
 **Output:** A reusable Go hybrid GraphRAG package that Alfred's query system is built on top of. Long-term, publishable as a standalone open-source library — the first decent Go implementation of hybrid GraphRAG on LadybugDB.
 
@@ -674,6 +684,9 @@ When the WAHA webhook fires, background jobs must immediately pause to avoid dat
 **Q2: Error Correction Flow**
 How does the user correct Alfred when it extracts something wrong? The agent may misinterpret a message, create a wrong node, or link things incorrectly. A deliberate correction mechanism - likely via the PWA - needs to be designed so corrections feed back into the agent and update the graph cleanly without leaving stale data.
 
+**Q3: Relationship-Editing Tool Design**
+`query_rag` now returns edges alongside nodes (Decision 56), so the agent has edge identity (`from_id`, `rel_type`, `to_id`) available during query flow. `update_node(node_id, fields)` still only covers property/content edits ("mark that done"). A second example from Decision 43 - "that was Rafid's task not mine" - is a relationship edit (re-pointing `ASSIGNED_TO`), which `update_node` doesn't cover. Needs either a second tool, e.g. `update_relationship(from_id, rel_type, old_to_id, new_to_id)`, or a `relationships` key in `update_node`'s fields that the Go layer interprets as edge create/delete. Not blocking - depends on the agent toolkit being built out in a later phase - but should be decided before that phase starts.
+
 ### 🟡 Low Priority / Future
 
 **Q1: Off-Site Backup Strategy**
@@ -741,3 +754,5 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 53 | **`history STRING[]` - Human-Readable Changelog** | Entries are self-contained strings: `"YYYY-MM-DD HH:MM - [narrative]"`, newest first. Read by LLM as a changelog without parsing. Only accessed when the query explicitly requires it. | Jun 13, 2026 |
 | 54 | **`content` Must Self-Signal Change** | New `content` must acknowledge the prior state (e.g. "Awalnya tugas ini milik Bahlil, sekarang dialihkan ke kamu") so the agent knows something changed without reading `history`. | Jun 13, 2026 |
 | 55 | **`created_at TIMESTAMP` on All Non-Person Node Types** | Enables temporal anchor queries without traversing history. Set once at creation, never updated. Person excluded — identity anchor, no content lifecycle. | Jun 13, 2026 |
+| 56 | **`query_rag` Returns a Subgraph, Not a Flat Node List** | Graph-expand stage already traverses edges to find neighbors - discarding them would mean re-deriving the same data later for relationship-editing tools. Output is `{ nodes: [...with id, node_type], edges: [...with from_id, to_id, rel_type, properties] }`. Preserves edge-only metadata (`PARTICIPANT_IN.role`, `KNOWS.descriptor`, etc.) and gives write tools stable handles. | Jun 15, 2026 |
+| 57 | **Phase 0 Includes a Concurrent Connection Lifecycle Stress Test** | `go-ladybug` issue #7 documented a Cgo/GC race (finalizer destroys `QueryResult` while another goroutine reads a derived `FlatTuple` → SIGSEGV), fixed via explicit `Close()`. Alfred's real access pattern is multi-goroutine (webhook handler, background jobs, query flow) against one `.lbug` file - Phase 0 must simulate this concurrency with disciplined `Close()` calls before Alfred depends on the binding. | Jun 15, 2026 |
