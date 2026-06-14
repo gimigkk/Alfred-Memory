@@ -2,7 +2,7 @@
 ### Architecture & Design Specification
 
 > **Status:** Planning / Pre-development
-> **Last updated:** June 13, 2026 (revalidated)
+> **Last updated:** June 14, 2026 (revalidated + GraphRAG architecture)
 > **Stack:** Golang Backend · LadybugDB · SQLite · Groq API · WAHA (GOWS) · PWA Frontend · Ubuntu 24.04 VPS (4GB RAM / 8GB Storage)
 
 ---
@@ -421,39 +421,38 @@ On Day 30, before raw messages are deleted, the system runs a targeted sweep - *
 
 ## 8. Agentic Query System
 
-Rather than writing raw database queries, the agent acts like a human secretary retrieving files - stepping through the graph using a restricted set of simple tools. This is the **"Link-by-Link" Traversal Loop**.
+### Retrieval: Hybrid GraphRAG
+Alfred uses a **Hybrid GraphRAG** retrieval pattern — vector search and graph traversal run in parallel, results are fused via RRF, and PageRank weights the final ranking. This replaces the original hand-rolled stamina-gated traversal loop, which was a worse, token-heavier reimplementation of the same idea.
 
-### Traversal Workflow
-1. **Search** - locate a starting node using keywords (entry point)
-2. **Scan** - look at the surrounding map of connected edges
-3. **Read** - open multiple connected nodes simultaneously
-4. **Evaluate** - decide if there's enough context to answer; if not, take another step or ask the user
+The pattern is ported from [`Volland/ladybug-rag`](https://github.com/Volland/ladybug-rag) (Python reference, ~300 lines) into Go as part of Phase 0. All four stages run natively inside LadybugDB via Cypher — no external services, no Python sidecar.
 
-### Stamina System (Fail Fast, Deep Dive)
-To prevent infinite loops and token drain:
-- **Base Stamina (2-3 turns):** Small action budget. If completely lost, agent fails fast and asks for a hint immediately.
-- **"Getting Warmer" Bonus (+1 stamina):** If the agent senses it's close to the answer, it can request an extension: `{"status": "getting warmer", "request_extra_stamina": true}`. Backend grants +1 per valid request.
-- **Hard Cap (5-6 turns):** Absolute backend kill switch. Once hit, the backend cuts the loop and forces the agent to ask the user for a hint.
+**Four retrieval stages:**
 
-### Edge Ranking (Preventing Hub Choking)
-Highly connected nodes (like yourself or core friends) will eventually accumulate thousands of edges. `get_surrounding_graph` never dumps raw data - the backend ranks adjacent nodes by combining **temporal recency** (`last_observed`) and **semantic similarity** to the original query, returning only the top 15.
+1. **Embed the query** — HTTP call to the pinned embedding API (same model used at write time)
+2. **Vector search** — `QUERY_VECTOR_INDEX` Cypher query returns top-K semantically similar nodes (HNSW)
+3. **Graph expand** — second Cypher query follows edges 1-2 hops from vector hits, using LadybugDB's native graph traversal
+4. **RRF fusion + PageRank ranking** — ~20 lines of Go math merges both ranked lists; PageRank weights structurally important nodes higher regardless of recency
+
+The agent receives pre-ranked context before it starts reasoning. No multi-turn traversal loop, no stamina system, no hard cap needed for retrieval.
 
 ### Agent Write Access During Query Flow
-The agent can write during query flow via `update_node` and `upsert_reminder`. If the user instructs a change ("mark that done", "that was Rafid's task not mine"), the agent executes it directly using tooling - no separate update pipeline. Updates follow the same `content` → `history` mechanism as extraction updates.
+The agent can write during query flow. If the user instructs a change ("mark that done", "that was Rafid's task not mine"), the agent executes it directly via tools — no separate update pipeline. Updates follow the same `content` → `history` mechanism as extraction updates.
 
-### Full Agent Toolkit
+When retrieved context is insufficient to answer and no write is needed, the agent calls `ask_user_for_hint` — the one retrieval escape hatch GraphRAG doesn't replace.
+
+### Alias & Full-Text Search
+BM25 full-text search via LadybugDB's native extension is used for alias matching in Phase 2 linking. Replaces the original custom keyword matching logic.
+
+### Agent Toolkit
 
 | Tool | Parameters | Output | Purpose |
 |---|---|---|---|
-| `search_nodes` | `keywords: string` | List of node IDs & titles | Entry point search using LadybugDB-native HNSW vector index |
-| `get_surrounding_graph` | `node_ids: list` | Top 15 ranked adjacent node IDs & edge types | Traversal map from current position |
-| `read_nodes` | `node_ids: list` | Array of full node data | Opens up to 5 nodes simultaneously |
-| `ask_user_for_hint` | `question: string` | Text response from user | Pauses loop and requests a clarifying clue |
+| `ask_user_for_hint` | `question: string` | Text response from user | Fires when ranked context is insufficient to answer. Pauses and requests a clarifying clue from the user. |
 | `check_reminders` | `task_ref?: string` | List of existing reminder rows | Checks SQLite before inserting to prevent duplicates |
 | `upsert_reminder` | `message, deadline, status, task_ref?` | Confirmation | Inserts or updates a reminder row in SQLite |
-| `update_node` | `node_id: string, fields: map` | Confirmation | Updates fields on an existing node (status, content, due_date, etc). Moves old content to history. Used during query flow when user instructs a correction or status change. |
+| `update_node` | `node_id: string, fields: map` | Confirmation | Updates fields on an existing node. Moves old content to history. Used when user instructs a correction or status change during query flow. |
 
-> **Note:** Tool list is incomplete. Additional tools will be identified during implementation - particularly around node creation during query flow, edge manipulation, and reminder deletion.
+> **Note:** Retrieval is handled by the Hybrid GraphRAG pipeline before the agent starts — not by agent tools. The toolkit above covers writes and clarification only. Additional tools may be identified during implementation.
 
 ---
 
@@ -560,16 +559,20 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 
 ### Stack
 
-| Component | Choice | Reason |
-|---|---|---|
-| OS | Ubuntu 24.04 | Stable LTS on budget VPS |
-| Backend | Golang | ~15MB idle RAM, native goroutines, single static binary, CGO interop for LadybugDB |
-| Graph DB | LadybugDB (via `go-ladybug`) | In-process C++ engine, HNSW vector index, full-text search, Kuzu's open-source successor |
-| Reminder DB | SQLite (`reminders.db`) | Single file, no server, concurrent-safe, native query support |
-| LLM | Groq API (Llama 3 70B / 8B) | Free tier generous enough for personal scale, fast inference |
-| Embeddings | Gemini Flash or HuggingFace API | Free external APIs to avoid loading vector models into 4GB RAM |
-| WhatsApp | WAHA + GOWS WebSockets | Proven webhook provider |
-| Frontend | PWA | Browser-native, no app store, works across all devices via URL, push notif support |
+| Component | Choice | Links | Reason |
+|---|---|---|---|
+| OS | Ubuntu 24.04 | — | Stable LTS on budget VPS |
+| Backend | Golang | [go.dev](https://go.dev) | ~15MB idle RAM, native goroutines, single static binary, CGO interop for LadybugDB |
+| Graph DB | LadybugDB via `go-ladybug` ⚠️ | [ladybug](https://github.com/LadybugDB/ladybug) · [go-ladybug](https://github.com/LadybugDB/go-ladybug) · [docs](https://docs.ladybugdb.com) | In-process C++ engine, HNSW vector index, BM25 full-text search, PageRank, Kuzu's open-source successor. **⚠️ go-ladybug is low-activity (15 stars, 3 forks) — validate in Phase 0 before depending on it.** |
+| GraphRAG | Port of `ladybug-rag` to Go | [ladybug-rag (Python ref)](https://github.com/Volland/ladybug-rag) | Hybrid retrieval: HNSW vector search + Cypher graph expand + RRF fusion + PageRank. ~100 lines of Go. Ported in Phase 0. |
+| Reminder DB | SQLite (`reminders.db`) via `mattn/go-sqlite3` | [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3) | Single file, no server, concurrent-safe, native query support |
+| LLM | Groq API | [groq.com](https://console.groq.com) | Free tier generous enough for personal scale, fast inference, prompt caching |
+| Embeddings | Groq / Gemini Flash / HuggingFace API | — | External API to avoid loading vector models into 4GB RAM. **Must pin one model — embedding model used at write time must match query time exactly.** |
+| STT (Onboarding) | Groq Whisper API | [docs](https://console.groq.com/docs/speech-text) | Already in stack. One HTTP call. Late-V1 feature. |
+| WhatsApp | WAHA + GOWS WebSockets | — | Proven webhook provider |
+| Push Notifications | `SherClockHolmes/webpush-go` | [webpush-go](https://github.com/SherClockHolmes/webpush-go) | VAPID-based Web Push, drop-in for PWA push notif delivery |
+| Auth | `golang-jwt/jwt` | [golang-jwt](https://github.com/golang-jwt/jwt) | Standard Go JWT library for credential gate |
+| Frontend | PWA | — | Browser-native, no app store, works across all devices via URL, push notif support |
 
 ### DevOps & Compilation
 `go-ladybug` uses CGO to compile native C++ bindings. Building natively on the 4GB VPS will crash due to insufficient RAM. The build pipeline is:
@@ -579,6 +582,27 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 ---
 
 ## 13. Project Phases
+
+### Phase 0 - Go Hybrid GraphRAG Port
+**Goal:** Validate the retrieval layer and `go-ladybug` bindings before building Alfred on top of them. Port [`ladybug-rag`](https://github.com/Volland/ladybug-rag) from Python to Go as a standalone package.
+
+**Why this first:** The entire Alfred stack depends on `go-ladybug` — an official but low-activity binding (15 stars, 3 forks) that had known issues in early releases. If it's broken or missing features, finding that out now costs days. Finding it out in Phase 2 costs months. Phase 0 is a contained ~100-line project that validates the foundation and produces a reusable artifact.
+
+**Scope:**
+- LadybugDB connection + schema setup in Go via `go-ladybug`
+- Store a document node with an embedding vector via external API
+- Build HNSW vector index
+- Hybrid retrieval: vector search (`QUERY_VECTOR_INDEX`) + Cypher graph expand (1-2 hops) + RRF fusion (~20 lines of Go math) + PageRank weighting
+- Pass ranked context to LLM, get answer back
+- Nothing else — no WhatsApp, no extraction pipeline, no Alfred persona
+
+**Reference:** Python implementation at [`Volland/ladybug-rag`](https://github.com/Volland/ladybug-rag) (~300 lines). Read this first, port to Go, validate it produces equivalent results.
+
+**Done when:** A Go binary can ingest a handful of test documents, build the graph, run a hybrid query, and return a correctly-ranked context to an LLM. Package is clean enough to extract as a standalone library later.
+
+**Output:** A reusable Go hybrid GraphRAG package that Alfred's query system is built on top of. Long-term, publishable as a standalone open-source library — the first decent Go implementation of hybrid GraphRAG on LadybugDB.
+
+---
 
 ### Phase 1 - Core Loop
 **Goal:** Ingest real WhatsApp data and query it. Nothing else matters until this works. If the memory model holds up here, the thesis is proven.
@@ -668,8 +692,8 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 |---|---|---|---|
 | 1 | **No local vector models** | Squeezing vector models into 4GB RAM is a bottleneck. Free lightweight external APIs handle embeddings instead. | Jun 12, 2026 |
 | 2 | **Memory Review Inbox** | Low-confidence merges or conflicts are pushed to a user inbox rather than merged silently. Acts as a spaced-repetition system for the user's own life events. | Jun 12, 2026 |
-| 3 | **Link-by-Link Traversal Tooling** | No raw Cypher queries. The agent uses a restricted set of tools for human-like graph navigation, avoiding syntax errors and hallucinated queries. Tool list is expected to grow during implementation. | Jun 12, 2026 |
-| 4 | **Stamina + Hard Cap Rule** | Base stamina 2-3 turns to fail fast. Warm leads grant +1. Hard cap at 5-6 prevents token drain and infinite loops. | Jun 12, 2026 |
+| 3 | ~~**Link-by-Link Traversal Tooling**~~ | ~~No raw Cypher queries. The agent uses a restricted set of tools for human-like graph navigation, avoiding syntax errors and hallucinated queries.~~ Superseded by Decision 43 — replaced by Hybrid GraphRAG retrieval. | Jun 12, 2026 |
+| 4 | ~~**Stamina + Hard Cap Rule**~~ | ~~Base stamina 2-3 turns to fail fast. Warm leads grant +1. Hard cap at 5-6 prevents token drain and infinite loops.~~ Superseded by Decision 43 — stamina system removed entirely. Retrieval is a single pipeline call, not a multi-turn loop. | Jun 12, 2026 |
 | 5 | **Insight Table (not Fact Table)** | "Facts" are too rigid. Insights capture qualitative values like character traits, vibes, shared memories, and emotional dynamics. | Jun 12, 2026 |
 | 6 | ~~**Polymorphic Causality Edges**~~ | ~~Polymorphic `TRIGGERED_BY` REL tables allow any node to cause, link to, or influence any other node organically.~~ Superseded by Decision 35. | Jun 12, 2026 |
 | 7 | **Pause on Webhook** | All background jobs must instantly yield when a new WAHA message arrives to avoid data hazards and DB locks. | Jun 12, 2026 |
@@ -708,8 +732,16 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 40 | **Circle node type added** | Named groups of people with shared context ("BPH IEEE", "Divisi C&M", a manager's subordinates). Replaces the need for a separate Organization node. Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context (MEMBER_OF role field), not by schema encoding. | Jun 13, 2026 |
 | 41 | **verbatim STRING field on Task and Insight** | Quotes live inside nodes, not as separate node types. A Quote is never a navigation destination - it's supporting material. verbatim is populated only when exact wording carries meaning that Alfred's paraphrase would lose (explicit commitments, certificate numbers, strong direct statements). Nullable on all nodes that carry it. | Jun 13, 2026 |
 | 42 | **MEMBER_OF REL table added** | Person→Circle relationship with role STRING. Role ("kadiv", "manager", "staff") is what enables the agent to resolve speaker-scoped aliases - if Syazana is kadiv of a Circle, "anak gua" from Syazana resolves to that Circle's members. | Jun 13, 2026 |
-| 43 | **Markdown Node Files Cut** | Markdown files were a derived mirror of LadybugDB - not used by the agent, not used for search, only for human inspection. The PWA observability layer and graph itself serve that purpose. Pointless complexity removed entirely. | Jun 13, 2026 |
-| 44 | **Nodes Modified In Place, Not Versioned** | No duplicate nodes, no version chains. When new information updates a node, `content` is overwritten with the current truth. Old content is prepended to `history STRING[]` before overwrite. Graph stays clean; history is accessible without traversal. | Jun 13, 2026 |
-| 45 | **`history STRING[]` - Human-Readable Changelog** | Each history entry is a self-contained string: `"YYYY-MM-DD HH:MM - [narrative]"`. Newest entries prepended (index 0 = most recent). The LLM reads it like a changelog - no parsing, no parallel arrays, no extra schema. `history` is only read when the query explicitly requires it. | Jun 13, 2026 |
-| 46 | **`content` Must Self-Signal Change** | When overwriting `content`, the extraction pipeline (via skill.md template) must acknowledge the prior state in the new narrative. E.g. "Awalnya tugas ini milik Bahlil, sekarang dialihkan ke kamu." The agent reading `content` alone knows a change occurred without touching `history`. | Jun 13, 2026 |
-| 47 | **`created_at TIMESTAMP` Added to All Non-Person Node Types** | Enables temporal anchor queries ("what was the first task at X") without traversing history. `created_at` is set once at node creation and never updated. ConversationBlock already had it. Person excluded - identity anchor, no content lifecycle. | Jun 13, 2026 |
+| 43 | **Hybrid GraphRAG Replaces Stamina-Gated Traversal** | The hand-rolled stamina loop (Decisions 3 and 4) was a worse, token-heavier reimplementation of the hybrid GraphRAG pattern. Replaced with: embed query → HNSW vector search → Cypher graph expand (1-2 hops) → RRF fusion → PageRank ranking. All four stages run natively in LadybugDB via Go. Agent toolkit reduced to write tools + `ask_user_for_hint` only. Supersedes Decisions 3 and 4. | Jun 14, 2026 |
+| 44 | **LadybugDB Native BM25 for Alias Search** | Custom keyword matching in Phase 2 linking replaced with LadybugDB's native BM25 full-text search extension. One Cypher clause instead of custom logic. | Jun 14, 2026 |
+| 45 | **LadybugDB PageRank for Edge Ranking** | Custom recency + semantic similarity edge ranking replaced with LadybugDB's built-in PageRank algorithm. Structurally important nodes surface correctly regardless of recency. | Jun 14, 2026 |
+| 46 | **Embedding Model Must Be Pinned** | The embedding model used at node write time must be identical to the model used at query time. Switching models later requires re-embedding the entire graph. Decision: pin the model in config before first write, never change without a full re-embed migration. | Jun 14, 2026 |
+| 47 | **Phase 0: Port ladybug-rag to Go Before Building Alfred** | go-ladybug is low-activity (15 stars, 3 forks) with known early binding issues. Phase 0 validates the binding and the hybrid GraphRAG pattern in a contained ~100-line project before Alfred depends on them. Output is a reusable Go package. Reference: [Volland/ladybug-rag](https://github.com/Volland/ladybug-rag). | Jun 14, 2026 |
+| 48 | **Attribution Uncertainty vs Duplicate Detection Are Different Inbox Concerns** | Both produce `needs_clarification` flags but carry different urgency. "I found a task but I'm not sure it's yours" requires immediate attention — a missed obligation. "These two nodes might be the same event" can wait for Nightwatch's nightly review. They should be separated in the Memory Review Inbox UX and potentially carry different push weights. | Jun 14, 2026 |
+| 49 | **Trust Calibration as Explicit First-Weeks Goal** | Alfred earns trust the same way a real secretary does — by being right often enough that the user takes its flags seriously. The first weeks of real data are a calibration period, not just a technical test. Log not just what Alfred extracted but how often the user agreed with its flags vs dismissed them. This gives a real metric for whether the 80% certainty bar is landing correctly. | Jun 14, 2026 |
+| 50 | **Onboarding: Conversational Seeding, Late V1** | Cold start solved by letting the user seed the graph by talking about themselves — people, roles, relationships, obligations — in a conversational flow driven by Alfred's persona, not a structured form. Seeded nodes carry `source: "user_declared"` — a different confidence class. Nightwatch never auto-merges or auto-stales user-declared nodes without explicit confirmation. STT via Groq Whisper API. Onboarding is a late-V1 feature, not blocking the prototype. | Jun 14, 2026 |
+| 51 | **Markdown Node Files Cut** | Markdown files were a derived mirror of LadybugDB - not used by the agent, not used for search, only for human inspection. The PWA observability layer and graph itself serve that purpose. Pointless complexity removed entirely. | Jun 13, 2026 |
+| 52 | **Nodes Modified In Place, Not Versioned** | No duplicate nodes, no version chains. When new information updates a node, `content` is overwritten with the current truth. Old content is prepended to `history STRING[]` before overwrite. Graph stays clean; history is accessible without traversal. | Jun 13, 2026 |
+| 53 | **`history STRING[]` - Human-Readable Changelog** | Each history entry is a self-contained string: `"YYYY-MM-DD HH:MM - [narrative]"`. Newest entries prepended (index 0 = most recent). The LLM reads it like a changelog - no parsing, no parallel arrays, no extra schema. `history` is only read when the query explicitly requires it. | Jun 13, 2026 |
+| 54 | **`content` Must Self-Signal Change** | When overwriting `content`, the extraction pipeline (via skill.md template) must acknowledge the prior state in the new narrative. E.g. "Awalnya tugas ini milik Bahlil, sekarang dialihkan ke kamu." The agent reading `content` alone knows a change occurred without touching `history`. | Jun 13, 2026 |
+| 55 | **`created_at TIMESTAMP` Added to All Non-Person Node Types** | Enables temporal anchor queries ("what was the first task at X") without traversing history. `created_at` is set once at node creation and never updated. ConversationBlock already had it. Person excluded - identity anchor, no content lifecycle. | Jun 13, 2026 |
