@@ -12,7 +12,6 @@ import (
 	"github.com/gimigkk/Alfred-Memory/internal/ladybug"
 	"github.com/gimigkk/Alfred-Memory/internal/llm"
 	"github.com/gimigkk/Alfred-Memory/internal/rag"
-	"github.com/gimigkk/Alfred-Memory/internal/waha"
 )
 
 type EvidenceRef struct {
@@ -34,8 +33,14 @@ type Mutation struct {
 	AddEdges   []EdgeMutation         `json:"add_edges,omitempty"`
 }
 
+type ManifestItem struct {
+	Line        string `json:"line"`
+	ActionTaken string `json:"action_taken"`
+}
+
 type LinkingOutput struct {
-	Mutations []Mutation `json:"mutations"`
+	ManifestAccounting []ManifestItem `json:"manifest_accounting"`
+	Mutations          []Mutation     `json:"mutations"`
 }
 
 type Orchestrator struct {
@@ -52,9 +57,8 @@ func NewOrchestrator(llm *llm.RouterClient, embed *embed.GeminiClient, dbConn *l
 	}
 }
 
-func (o *Orchestrator) RunAgenticIngestion(block *waha.ConversationBlock) error {
-	log.Printf("\n\033[36mStarting Agentic Ingestion for block: %s\033[0m", block.ID)
-	transcript := block.FormatTranscript()
+func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryRun bool) (*LinkingOutput, error) {
+	log.Printf("\n\033[36mStarting Agentic Ingestion for block: %s\033[0m", runID)
 
 	tools := []llm.ToolDef{
 		{
@@ -625,7 +629,7 @@ func (o *Orchestrator) RunAgenticIngestion(block *waha.ConversationBlock) error 
 
 	mutationsJSON, err := o.LLM.GenerateAgentic(prompts.IngestionAgentPrompt, transcript, tools, executor)
 	if err != nil {
-		return fmt.Errorf("agent loop failed: %w", err)
+		return nil, fmt.Errorf("agent loop failed: %w", err)
 	}
 
 	log.Printf("\033[90m--- AGENT FINAL COMMIT ---\n%s\n------------------\033[0m\n", mutationsJSON)
@@ -634,7 +638,7 @@ func (o *Orchestrator) RunAgenticIngestion(block *waha.ConversationBlock) error 
 	// Since commit_mutations takes an argument with {"mutations": [...]}, we parse it like LinkingOutput
 	var linkOut LinkingOutput
 	if err := json.Unmarshal([]byte(mutationsJSON), &linkOut); err != nil {
-		return fmt.Errorf("failed to parse final mutations: %w", err)
+		return nil, fmt.Errorf("failed to parse final mutations: %w", err)
 	}
 
 	log.Printf("\033[32m✔ Agent generated %d mutations.\033[0m Executing against DB...\n\n", len(linkOut.Mutations))
@@ -654,7 +658,9 @@ func (o *Orchestrator) RunAgenticIngestion(block *waha.ConversationBlock) error 
 		log.Printf("%s🔨 Mutation: [%s] %s (ID: %s)\033[0m", color, m.Operation, m.NodeType, m.NodeID)
 
 		if m.Operation == "CREATE_NODE" || (m.Operation == "UPDATE_NODE" && m.NodeType != "" && content != "") {
-			ladybug.AddMockNode(m.NodeID, m.NodeType, content)
+		if !dryRun {
+				ladybug.AddMockNode(m.NodeID, m.NodeType, content)
+		}
 		}
 
 		if content != "" {
@@ -666,6 +672,7 @@ func (o *Orchestrator) RunAgenticIngestion(block *waha.ConversationBlock) error 
 			}
 		}
 		transcriptLines := strings.Split(transcript, "\n")
+		var survivingEdges []EdgeMutation
 
 		for _, e := range m.AddEdges {
 			// Substring verification for evidence refs
@@ -710,16 +717,23 @@ func (o *Orchestrator) RunAgenticIngestion(block *waha.ConversationBlock) error 
 				log.Printf("   \033[31m└─ [REJECTED EDGE]\033[0m %s -> %s (Failed all %d refs: %s)", e.RelType, e.TargetNodeID, len(e.EvidenceRefs), strings.Join(failedQuotes, ", "))
 				continue
 			}
+			
+			survivingEdges = append(survivingEdges, e)
 
 			if len(failedQuotes) > 0 {
 				log.Printf("   └─ Add Edge: \033[33m%s\033[0m -> \033[32m%s\033[0m (Verified %d/%d refs, %d failed: %s)", e.RelType, e.TargetNodeID, validCount, len(e.EvidenceRefs), len(failedQuotes), strings.Join(failedQuotes, ", "))
 			} else {
 				log.Printf("   └─ Add Edge: \033[33m%s\033[0m -> \033[32m%s\033[0m (Verified %d/%d refs)", e.RelType, e.TargetNodeID, validCount, len(e.EvidenceRefs))
 			}
-			ladybug.AddMockEdge(m.NodeID, e.TargetNodeID, e.RelType)
+				if !dryRun {
+					ladybug.AddMockEdge(m.NodeID, e.TargetNodeID, e.RelType)
+				}
 		}
+		
+		linkOut.Mutations[i].AddEdges = survivingEdges
+		
 		log.Println() // Add blank line between mutations
 	}
 
-	return nil
+	return &linkOut, nil
 }

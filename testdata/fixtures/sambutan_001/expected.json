@@ -1,0 +1,55 @@
+{
+  "fixture": "sambutan_001",
+  "checks": [
+    {
+      "id": "event_created",
+      "description": "An Event node was created",
+      "type": "node_exists",
+      "node_type": "Event"
+    },
+    {
+      "id": "backup_task_assigned",
+      "description": "Rezonaldo has an ASSIGNED_TO edge to some Task",
+      "type": "edge_exists",
+      "source": "person_rezonaldo",
+      "rel_type": "ASSIGNED_TO",
+      "target_type": "Task"
+    },
+    {
+      "id": "live_report_task_created",
+      "description": "A Task related to live reporting was created",
+      "type": "node_exists",
+      "node_type": "Task",
+      "content_contains_any": ["live report", "laporan langsung"]
+    },
+    {
+      "id": "rafid_not_wrongly_assigned",
+      "description": "Rafid does NOT get ASSIGNED_TO for the reminder line (this should never happen)",
+      "type": "edge_absent",
+      "source": "person_rafid",
+      "rel_type": "ASSIGNED_TO"
+    },
+    {
+      "id": "bahlil_never_appears",
+      "description": "Bahlil should never be referenced — vp/jon corroboration always fails",
+      "type": "node_absent",
+      "node_id": "person_bahlil"
+    },
+    {
+      "id": "all_speakers_covered",
+      "description": "Every transcript speaker has at least one edge or node mutation",
+      "type": "speaker_coverage",
+      "speakers": ["_62_896_1099_1799", "rafif_ilmany_ieee25", "rezonaldo_ieee__", "apta_ieee25", "jeslyn_ieee", "THE USER"]
+    },
+    {
+      "id": "manifest_task_match",
+      "description": "Every CREATE_TASK claim in manifest_accounting has a corresponding Task node with surviving evidence",
+      "type": "manifest_task_match"
+    },
+    {
+      "id": "no_directional_violations",
+      "description": "No edge violates the rel_type direction map",
+      "type": "structural_invariant"
+    }
+  ]
+}

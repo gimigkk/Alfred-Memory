@@ -59,7 +59,7 @@ func main() {
 	// Register webhook callback
 	waha.OnBlockCommitted = func(block *waha.ConversationBlock) {
 		go func() {
-			err := orchestrator.RunAgenticIngestion(block)
+			_, err := orchestrator.RunAgenticIngestion(block.ID, block.FormatTranscript(), false)
 			if err != nil {
 				log.Printf("❌ Failed to process block %s: %v", block.ID, err)
 			}
