@@ -16,8 +16,8 @@
       "target_type": "Task"
     },
     {
-      "id": "live_report_task_created",
-      "description": "A Task related to live reporting was created",
+      "id": "live_report_task_exists_independent_of_assignment",
+      "description": "A Task related to live reporting was created even if ASSIGNED_TO fails",
       "type": "node_exists",
       "node_type": "Task",
       "content_contains_any": ["live report", "laporan langsung"]

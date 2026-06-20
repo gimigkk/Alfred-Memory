@@ -267,7 +267,7 @@ func main() {
 	}
 
 	fmt.Printf("\nSOFT COMPLETENESS (expected variance):\n")
-	softCompleteness := []string{"event_created", "backup_task_assigned", "live_report_task_created", "all_speakers_covered", "manifest_task_match"}
+	softCompleteness := []string{"event_created", "backup_task_assigned", "live_report_task_exists_independent_of_assignment", "all_speakers_covered", "manifest_task_match"}
 	for _, id := range softCompleteness {
 		score := scoreMap[id]
 		fmt.Printf("  %-30s %2d/%d\n", id, score, N)
