@@ -122,9 +122,9 @@ Not just a smart notes app. Alfred is closer to a personal epistemics engine - s
 │   query_rag(query, top_k?, hops?) -> subgraph               │
 │     stages: embed, vector search (HNSW), graph              │
 │     expand (1-2 hops), RRF fusion, PageRank                 │
-│   Other tools: ask_user_for_hint,                           │
-│                 check_reminders, upsert_reminder,           │
-│                 update_node (+ more TBD)                    │
+│   Other tools: ask_user_for_hint, check_reminders,          │
+│                 upsert_reminder, create_node,               │
+│                 update_node, delete_node                    │
 │   LLM decides which tools to call; Go executes              │
 │   No stamina/hard cap - query_rag auto-runs at              │
 │   query start; agent re-queries or writes as                │
@@ -208,11 +208,14 @@ Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced
 
 ## 6. LLM Extraction Pipeline
 
-### Trigger
-When a conversation block is committed, the extraction pipeline reads the transcript and creates, links, or updates nodes in LadybugDB according to the schema.
+### Two-Phase Extraction (with RAG Intermediary)
+When a block commits, extraction runs linearly:
+1. **Phase 1 (Blind Extraction):** The LLM reads the raw transcript and outputs a JSON list of candidate nodes (`Task`, `Event`, `Insight`). It has no vault access. Any ambiguity defaults to `needs_clarification: true`.
+2. **The RAG Fetch (Go Intermediary):** The Go backend automatically runs `BM25_search_aliases(candidate.aliases)` and `query_rag(candidate.content)` for every candidate.
+3. **Phase 2 (Identity & Vault Linking):** The LLM is handed the candidates alongside their respective RAG subgraphs. It outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions without making any manual tool calls.
 
 ### Cross-Block Event Deduplication
-The same event (e.g. SoTQ) may be referenced across many blocks over time. Phase 2 first searches by alias match. If no alias matches but the block is temporally proximate to a known event and context is consistent, the agent attempts to link. If confidence is insufficient, it flags `needs_clarification` and asks the user rather than silently creating a duplicate node.
+The Phase 2 linking agent enforces strict explicit keyword matching. If no alias matches but the block is temporally proximate to a known event, the agent still flags `needs_clarification` and pushes to the Memory Review Inbox rather than silently merging.
 
 ### Language Boundaries
 - **Storage (Database properties):** Stored explicitly in **Indonesian**. This matches the vocabulary of real messages, ensuring keyword searches (BM25) and fuzzy lookups match naturally without losing semantic nuance in translation.
@@ -458,13 +461,15 @@ BM25 full-text search via LadybugDB's native extension is used for alias matchin
 
 | Tool | Parameters | Output | Purpose |
 |---|---|---|---|
-| `query_rag` | `query: string, top_k?: int, hops?: int` | Subgraph: `{ nodes: [...with id, node_type], edges: [...with from_id, to_id, rel_type, properties] }` | Runs the full Hybrid GraphRAG pipeline (embed → vector search → graph expand → RRF + PageRank) with custom params. Called once automatically at query start; agent can call again mid-reasoning if initial context is insufficient (e.g. narrower scope, deeper hop depth, different query framing). |
-| `ask_user_for_hint` | `question: string` | Text response from user | Fires when RAG context is insufficient and re-querying wouldn't help. Requests a clarifying clue from the user. |
-| `check_reminders` | `task_ref?: string` | List of existing reminder rows | Checks SQLite before inserting to prevent duplicates. |
-| `upsert_reminder` | `message, deadline, status, task_ref?` | Confirmation | Inserts or updates a reminder row in SQLite. |
-| `update_node` | `node_id: string, fields: map` | Confirmation | Updates fields on an existing node. Moves old content to history. Used when the user instructs a correction or status change during query flow. |
+| `query_rag` | `query: string, top_k?: int, hops?: int` | Subgraph: `{ nodes: [...], edges: [...] }` | Runs the full Hybrid GraphRAG pipeline. Auto-called at query start; callable again mid-reasoning. |
+| `create_node` | `node_type: string, fields: map` | Confirmation | Creates a new memory mid-chat. Fields include `content`, `aliases`, and `edges`. |
+| `update_node` | `node_id: string, fields: map` | Confirmation | Mutates a node. **Fields include `add_edges` and `remove_edges`**. The LLM must provide a new `content` narrative whenever modifying relationships, preventing graph rot. Old content goes to history. |
+| `delete_node` | `node_id: string` | Confirmation | Hard deletes a node. Go automatically handles cascade deletes of connected edges and reminders. |
+| `upsert_reminder` | `message, deadline, status, task_ref?` | Confirmation | Inserts or updates a deadline reminder in SQLite. |
+| `check_reminders` | `task_ref?: string` | List of rows | Checks SQLite for existing reminders to prevent duplicates. |
+| `ask_user_for_hint` | `question: string` | Text response | Requests a clarifying clue from the user when graph context is insufficient. |
 
-> **Note:** `query_rag` is called automatically before the agent starts reasoning (with default params). Subsequent calls are agent-driven and allow custom `top_k` and `hops` values. Additional tools may be identified during implementation.
+> **Note:** Standalone `create_edge` and `delete_edge` tools are explicitly banned (Decision 59). Edge mutations must happen via `update_node` to ensure the node's text `content` remains synchronized with its structural relationships.
 
 ---
 
@@ -502,6 +507,7 @@ Before inserting, the agent calls `check_reminders` to prevent duplicates. The `
 ```
 pending → sent                  (cron fires push notif)
 pending → dismissed             (user dismisses from PWA)
+pending → dismissed             (Go auto-dismisses when Task status → completed/abandoned/stale)
 pending → needs_clarification   (agent unsure what the task actually is)
 needs_clarification → pending   (user clarifies, agent updates)
 needs_clarification → dismissed
@@ -520,6 +526,9 @@ Any reminder or node flagged `needs_clarification` is pushed to the user **immed
 
 ### Cascading Deletion
 If a Task node is deleted from LadybugDB (bad data), its associated reminder rows cascade-delete via `task_ref`.
+
+### Auto-Dismissal on Status Change
+If the agent calls `update_node` to change a Task's status to `completed`, `abandoned`, or `stale`, the Go backend automatically intercepts this and marks any associated pending reminder in SQLite as `dismissed`. The agent does not need to manually manage the reminder state in these cases.
 
 ### Deadline Changes
 When a task's `due_date` changes, the agent calls `upsert_reminder` with the updated deadline. The unique index on `(task_ref, deadline)` handles this as a delete + insert. The old reminder row is replaced.
@@ -664,17 +673,7 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 
 ### ⚫ Critical Priority
 
-**Q1: Agentic Pipeline Specification**
-The turn-by-turn logic of every pipeline needs to be fully specced — what the agent sees at each step, what it decides, what tools it calls, and under what conditions it terminates or escalates. This will surface missing tools and edge cases that can't be caught from the schema alone. Pipelines to spec:
-
-1. **Ingestion & Extraction** - webhook → block builder → commit → Phase 1 extract → Phase 2 link → write to graph
-2. **Alfred Chat / Query Flow** - user message → `query_rag` (auto, default params) → agent reasoning → optional re-query via `query_rag` (custom params) or `ask_user_for_hint` → optional write → response
-3. **Reminder Creation** - extraction or query flow → `check_reminders` → `upsert_reminder`
-4. **Reminder Dispatch** - cron → scan SQLite → push notification
-5. **Nightwatch** - nightly → dedup detection → stale flagging → pre-purge sweep
-6. **needs_clarification Push** - flagged node created → format → push notification → surface in Memory Review Inbox
-7. **Nightwatch Merge** - user swipes merge → surviving node picked → edges re-pointed → duplicate deleted
-8. **Embedding Generation** - node created/updated → call external API → store vector
+*(None currently)*
 
 ### 🔴 High Priority
 
@@ -683,9 +682,6 @@ When the WAHA webhook fires, background jobs must immediately pause to avoid dat
 
 **Q2: Error Correction Flow**
 How does the user correct Alfred when it extracts something wrong? The agent may misinterpret a message, create a wrong node, or link things incorrectly. A deliberate correction mechanism - likely via the PWA - needs to be designed so corrections feed back into the agent and update the graph cleanly without leaving stale data.
-
-**Q3: Relationship-Editing Tool Design**
-`query_rag` now returns edges alongside nodes (Decision 56), so the agent has edge identity (`from_id`, `rel_type`, `to_id`) available during query flow. `update_node(node_id, fields)` still only covers property/content edits ("mark that done"). A second example from Decision 43 - "that was Rafid's task not mine" - is a relationship edit (re-pointing `ASSIGNED_TO`), which `update_node` doesn't cover. Needs either a second tool, e.g. `update_relationship(from_id, rel_type, old_to_id, new_to_id)`, or a `relationships` key in `update_node`'s fields that the Go layer interprets as edge create/delete. Not blocking - depends on the agent toolkit being built out in a later phase - but should be decided before that phase starts.
 
 ### 🟡 Low Priority / Future
 
@@ -756,3 +752,5 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 55 | **`created_at TIMESTAMP` on All Non-Person Node Types** | Enables temporal anchor queries without traversing history. Set once at creation, never updated. Person excluded — identity anchor, no content lifecycle. | Jun 13, 2026 |
 | 56 | **`query_rag` Returns a Subgraph, Not a Flat Node List** | Graph-expand stage already traverses edges to find neighbors - discarding them would mean re-deriving the same data later for relationship-editing tools. Output is `{ nodes: [...with id, node_type], edges: [...with from_id, to_id, rel_type, properties] }`. Preserves edge-only metadata (`PARTICIPANT_IN.role`, `KNOWS.descriptor`, etc.) and gives write tools stable handles. | Jun 15, 2026 |
 | 57 | **Phase 0 Includes a Concurrent Connection Lifecycle Stress Test** | `go-ladybug` issue #7 documented a Cgo/GC race (finalizer destroys `QueryResult` while another goroutine reads a derived `FlatTuple` → SIGSEGV), fixed via explicit `Close()`. Alfred's real access pattern is multi-goroutine (webhook handler, background jobs, query flow) against one `.lbug` file - Phase 0 must simulate this concurrency with disciplined `Close()` calls before Alfred depends on the binding. | Jun 15, 2026 |
+| 58 | **Agentic Pipeline Specification Finalized** | Documented the three true autonomous pipelines: Ingestion (linear, ETL-style with RAG intermediary), Chat Flow (non-linear, full CRUD capability), and Nightwatch (cron-triggered graph maintenance). Eliminates manual traversal loops in Phase 2 extraction. | Jun 20, 2026 |
+| 59 | **Edges Merged into Node Mutations (Option B)** | To prevent graph rot and history-bypassing, raw `create_edge` / `delete_edge` tools are banned. The agent modifies edges via `update_node`'s `add_edges` / `remove_edges` fields, which forces it to rewrite the node's `content` narrative concurrently. | Jun 20, 2026 |
