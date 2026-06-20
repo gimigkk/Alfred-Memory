@@ -47,7 +47,7 @@ func AddMockNode(id, nodeType, content string) {
 }
 
 func AddMockEdge(from, to, relType string) {
-	mockEdges = append(mockEdges, []any{from, to, relType})
+	mockEdges = append(mockEdges, []any{from, to, relType, ""})
 }
 
 func (c *Connection) Query(query string) (*QueryResult, error) {
