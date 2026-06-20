@@ -207,12 +207,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				return "", fmt.Errorf("batch embedding failed: %w", err)
 			}
 
-			// Helper to simulate fuzzy matching by stripping all punctuation and spaces
-			normalizeStr := func(s string) string {
-				reg := regexp.MustCompile("[^a-zA-Z0-9]+")
-				return strings.ToLower(reg.ReplaceAllString(s, ""))
-			}
-			
+			// Using package-level normalizeStr
 			for i, query := range queries {
 				vec := vecs[i]
 				queriedTerms = append(queriedTerms, normalizeStr(query))
@@ -451,11 +446,6 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				}
 
 				// Check User Resolution (Rule 16) coverage
-				normalizeStr := func(s string) string {
-					reg := regexp.MustCompile("[^a-zA-Z0-9]+")
-					return strings.ToLower(reg.ReplaceAllString(s, ""))
-				}
-
 				for _, speaker := range extractedSpeakers {
 					if strings.HasPrefix(speaker, "_62_") { continue }
 					speakerNorm := normalizeStr(speaker)
@@ -490,10 +480,11 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 							
 							checkID := func(id string, typ string) bool {
 								if typ != "Person" { return false }
-								if strings.Contains(strings.ToLower(id), strings.ToLower(speaker)) { return true }
+								speakerTokens := tokenize(speaker)
+								if isSubslice(speakerTokens, tokenize(id)) { return true }
 								contentStr := validToolNodeContent[id]
 								if contentStr == "" { contentStr = batchCreatedContent[id] }
-								if strings.Contains(strings.ToLower(contentStr), strings.ToLower(speaker)) { return true }
+								if isSubslice(speakerTokens, tokenize(contentStr)) { return true }
 								return false
 							}
 
@@ -535,6 +526,63 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 							sourceType = validToolNodeTypes[nodeID]
 							if sourceType == "" {
 								sourceType = batchCreatedNodeTypes[nodeID]
+							}
+						}
+
+						if op == "CREATE_NODE" && sourceType == "Person" {
+							var newNamesAndAliases []string
+							if props, ok := mItem["properties"].(map[string]any); ok {
+								if name, ok := props["name"].(string); ok && strings.TrimSpace(name) != "" {
+									newNamesAndAliases = append(newNamesAndAliases, name)
+								}
+								if aliases, ok := props["aliases"].([]any); ok {
+									for _, a := range aliases {
+										if aStr := fmt.Sprint(a); strings.TrimSpace(aStr) != "" {
+											newNamesAndAliases = append(newNamesAndAliases, aStr)
+										}
+									}
+								}
+							}
+
+							checkDuplicate := func(compareID, compareContent string) error {
+								for _, item := range newNamesAndAliases {
+									normItem := normalizeStr(item)
+									if len(normItem) < 4 {
+										continue // skip short names/aliases
+									}
+									itemTokens := tokenize(item)
+									
+									// Use order-independent isTokenSubset matching
+									if isTokenSubset(itemTokens, tokenize(compareID)) || isTokenSubset(itemTokens, tokenize(compareContent)) {
+										return fmt.Errorf("ERROR: You are attempting to CREATE_NODE for Person '%s' (alias/name '%s') which already exists in the vault/batch as '%s'. You must use UPDATE_NODE instead per Rule 4.", nodeID, item, compareID)
+									}
+								}
+								return nil
+							}
+
+							// Check against vault RAG nodes (Person type only)
+							for valID, valContent := range validToolNodeContent {
+								valType := validToolNodeTypes[valID]
+								if valType != "Person" {
+									continue
+								}
+								if err := checkDuplicate(valID, valContent); err != nil {
+									return "", err
+								}
+							}
+
+							// Check against other batch created nodes (Person type only)
+							for batchID, batchContent := range batchCreatedContent {
+								if batchID == nodeID {
+									continue // Skip self
+								}
+								batchType := batchCreatedNodeTypes[batchID]
+								if batchType != "Person" {
+									continue
+								}
+								if err := checkDuplicate(batchID, batchContent); err != nil {
+									return "", err
+								}
 							}
 						}
 
@@ -736,4 +784,60 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	}
 
 	return &linkOut, nil
+}
+
+func normalizeStr(s string) string {
+	reg := regexp.MustCompile("[^a-zA-Z0-9]+")
+	return strings.ToLower(reg.ReplaceAllString(s, ""))
+}
+
+func tokenize(s string) []string {
+	reg := regexp.MustCompile("[^a-zA-Z0-9]+")
+	parts := reg.Split(s, -1)
+	var tokens []string
+	for _, p := range parts {
+		p = strings.ToLower(p)
+		if p != "" {
+			tokens = append(tokens, p)
+		}
+	}
+	return tokens
+}
+
+func isSubslice(sub, main []string) bool {
+	if len(sub) == 0 {
+		return false
+	}
+	if len(sub) > len(main) {
+		return false
+	}
+	for i := 0; i <= len(main)-len(sub); i++ {
+		match := true
+		for j := 0; j < len(sub); j++ {
+			if main[i+j] != sub[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+func isTokenSubset(sub, main []string) bool {
+	if len(sub) == 0 {
+		return false
+	}
+	mainSet := make(map[string]bool, len(main))
+	for _, t := range main {
+		mainSet[t] = true
+	}
+	for _, t := range sub {
+		if !mainSet[t] {
+			return false
+		}
+	}
+	return true
 }
