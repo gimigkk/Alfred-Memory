@@ -1,1 +1,7 @@
 /.obsidian/
+.env
+*.db
+.lbug/
+/alfred
+*.exe
+*.log

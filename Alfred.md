@@ -208,11 +208,10 @@ Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced
 
 ## 6. LLM Extraction Pipeline
 
-### Two-Phase Extraction (with RAG Intermediary)
-When a block commits, extraction runs linearly:
-1. **Phase 1 (Blind Extraction):** The LLM reads the raw transcript and outputs a JSON list of candidate nodes (`Task`, `Event`, `Insight`). It has no vault access. Any ambiguity defaults to `needs_clarification: true`.
-2. **The RAG Fetch (Go Intermediary):** The Go backend automatically runs `BM25_search_aliases(candidate.aliases)` and `query_rag(candidate.content)` for every candidate.
-3. **Phase 2 (Identity & Vault Linking):** The LLM is handed the candidates alongside their respective RAG subgraphs. It outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions without making any manual tool calls.
+### Agentic Ingestion Loop
+When a block commits, processing runs in a fully Agentic ReAct loop to maximize accuracy and resolve coreferences:
+1. **Agent Investigation:** The LLM receives the raw transcript and is equipped with a `query_rag` tool. It reads the chat, and if it encounters ambiguous entities (e.g. "him", "the event"), it calls `query_rag` to fetch subgraph context from the vault. It enters a "thought loop", continuously fetching context until it resolves the references.
+2. **Commit Mutations:** Once the agent is confident it has resolved all entities (or determined they truly cannot be resolved and require `needs_clarification`), it calls the `commit_mutations` tool. This outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions directly to the Go backend.
 
 ### Cross-Block Event Deduplication
 The Phase 2 linking agent enforces strict explicit keyword matching. If no alias matches but the block is temporally proximate to a known event, the agent still flags `needs_clarification` and pushes to the Memory Review Inbox rather than silently merging.
@@ -585,8 +584,8 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 | Graph DB | LadybugDB via `go-ladybug` ⚠️ | [ladybug](https://github.com/LadybugDB/ladybug) · [go-ladybug](https://github.com/LadybugDB/go-ladybug) · [docs](https://docs.ladybugdb.com) | In-process C++ engine, HNSW vector index, BM25 full-text search, PageRank, Kuzu's open-source successor. **⚠️ go-ladybug is low-activity (15 stars, 3 forks) — validate in Phase 0 before depending on it.** |
 | GraphRAG | Port of `ladybug-rag` to Go | [ladybug-rag (Python ref)](https://github.com/Volland/ladybug-rag) | Hybrid retrieval: HNSW vector search + Cypher graph expand + RRF fusion + PageRank. ~100 lines of Go. Ported in Phase 0. |
 | Reminder DB | SQLite (`reminders.db`) via `mattn/go-sqlite3` | [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3) | Single file, no server, concurrent-safe, native query support |
-| LLM | Groq API | [groq.com](https://console.groq.com) | Free tier generous enough for personal scale, fast inference, prompt caching |
-| Embeddings | Groq / Gemini Flash / HuggingFace API | — | External API to avoid loading vector models into 4GB RAM. **Must pin one model — embedding model used at write time must match query time exactly.** |
+| LLM | Groq API (`llama-3.3-70b-versatile`) | [groq.com](https://console.groq.com) | Free tier generous enough for personal scale, fast inference, prompt caching |
+| Embeddings | Google Gemini API (`gemini-embedding-2`) | — | External API to avoid loading vector models into 4GB RAM. **Must pin one model — embedding model used at write time must match query time exactly.** |
 | STT (Onboarding) | Groq Whisper API | [docs](https://console.groq.com/docs/speech-text) | Already in stack. One HTTP call. Late-V1 feature. |
 | WhatsApp | WAHA + GOWS WebSockets | — | Proven webhook provider |
 | Push Notifications | `SherClockHolmes/webpush-go` | [webpush-go](https://github.com/SherClockHolmes/webpush-go) | VAPID-based Web Push, drop-in for PWA push notif delivery |
@@ -602,7 +601,7 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 
 ## 13. Project Phases
 
-### Phase 0 - Go Hybrid GraphRAG Port
+### Phase 0 - Go Hybrid GraphRAG Port ✅ (COMPLETED)
 **Goal:** Validate the retrieval layer and `go-ladybug` bindings before building Alfred on top of them. Port [`ladybug-rag`](https://github.com/Volland/ladybug-rag) from Python to Go as a standalone package.
 
 **Why this first:** The entire Alfred stack depends on `go-ladybug` — an official but low-activity binding (15 stars, 3 forks) that had known issues in early releases. If it's broken or missing features, finding that out now costs days. Finding it out in Phase 2 costs months. Phase 0 is a contained ~100-line project that validates the foundation and produces a reusable artifact.
@@ -754,3 +753,4 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 57 | **Phase 0 Includes a Concurrent Connection Lifecycle Stress Test** | `go-ladybug` issue #7 documented a Cgo/GC race (finalizer destroys `QueryResult` while another goroutine reads a derived `FlatTuple` → SIGSEGV), fixed via explicit `Close()`. Alfred's real access pattern is multi-goroutine (webhook handler, background jobs, query flow) against one `.lbug` file - Phase 0 must simulate this concurrency with disciplined `Close()` calls before Alfred depends on the binding. | Jun 15, 2026 |
 | 58 | **Agentic Pipeline Specification Finalized** | Documented the three true autonomous pipelines: Ingestion (linear, ETL-style with RAG intermediary), Chat Flow (non-linear, full CRUD capability), and Nightwatch (cron-triggered graph maintenance). Eliminates manual traversal loops in Phase 2 extraction. | Jun 20, 2026 |
 | 59 | **Edges Merged into Node Mutations (Option B)** | To prevent graph rot and history-bypassing, raw `create_edge` / `delete_edge` tools are banned. The agent modifies edges via `update_node`'s `add_edges` / `remove_edges` fields, which forces it to rewrite the node's `content` narrative concurrently. | Jun 20, 2026 |
+| 60 | **Phase 0 Findings Locked** | Pinned APIs to `gemini-embedding-2` and `llama-3.3-70b-versatile`. `go-ladybug` requires Go 1.26+ (handled via `GOTOOLCHAIN=auto`) and CGO builds require `lbug.h` host headers. Vector Indexes strictly require a `FLOAT[768]` column rather than a string-based text index. | Jun 20, 2026 |
