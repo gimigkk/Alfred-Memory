@@ -23,8 +23,8 @@ func main() {
 
 	// 1. Load config & API clients
 	cfg := config.LoadConfig()
-	gemini := embed.NewGeminiClient(cfg.GeminiAPIKey)
-	groq := llm.NewGroqClient(cfg.GroqAPIKey)
+	geminiEmbed := embed.NewGeminiClient(cfg.GeminiAPIKey)
+	llmRouter := llm.NewRouterClient(cfg.GeminiAPIKey, cfg.GroqAPIKey)
 
 	// 2. Initialize DBs
 	dbDir := "./.lbug"
@@ -54,7 +54,7 @@ func main() {
 	defer sqliteDB.Close()
 
 	// 3. Setup Orchestrator
-	orchestrator := agent.NewOrchestrator(groq, gemini, conn)
+	orchestrator := agent.NewOrchestrator(llmRouter, geminiEmbed, conn)
 
 	// Register webhook callback
 	waha.OnBlockCommitted = func(block *waha.ConversationBlock) {

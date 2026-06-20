@@ -78,3 +78,82 @@ func (c *GeminiClient) GetVector(text string) ([]float32, error) {
 
 	return vector, nil
 }
+
+// GetVectors batches multiple strings into a single API call to save Rate Limit quota.
+func (c *GeminiClient) GetVectors(texts []string) ([][]float32, error) {
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents?key=%s", c.APIKey)
+
+	var requests []map[string]interface{}
+	for _, text := range texts {
+		requests = append(requests, map[string]interface{}{
+			"model": "models/gemini-embedding-2",
+			"content": map[string]interface{}{
+				"parts": []map[string]interface{}{
+					{"text": text},
+				},
+			},
+		})
+	}
+
+	reqBody := map[string]interface{}{
+		"requests": requests,
+	}
+
+	jsonValue, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gemini api error (status %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse json: %w", err)
+	}
+
+	embeddingsData, ok := result["embeddings"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected gemini response format: missing 'embeddings' array")
+	}
+
+	var vectors [][]float32
+	for _, emb := range embeddingsData {
+		embeddingMap, ok := emb.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("unexpected embedding item format")
+		}
+		valuesData, ok := embeddingMap["values"].([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("missing 'values' array in embedding item")
+		}
+
+		vector := make([]float32, len(valuesData))
+		for i, v := range valuesData {
+			num, ok := v.(float64)
+			if !ok {
+				return nil, fmt.Errorf("expected float number in vector at index %d", i)
+			}
+			vector[i] = float32(num)
+		}
+		vectors = append(vectors, vector)
+	}
+
+	return vectors, nil
+}

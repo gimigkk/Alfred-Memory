@@ -5,16 +5,9 @@ import (
 	"log"
 
 	ladybug "github.com/gimigkk/Alfred-Memory/internal/ladybug"
-	"github.com/gimigkk/Alfred-Memory/internal/embed"
 )
 
-func QueryRAG(conn *ladybug.Connection, gemini *embed.GeminiClient, query string, topK int, rrfK int) (*Subgraph, error) {
-	// 1. Embed query
-	vec, err := gemini.GetVector(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to embed query: %w", err)
-	}
-
+func QueryRAG(conn *ladybug.Connection, vec []float32, query string, topK int, rrfK int) (*Subgraph, error) {
 	vecStr := "["
 	for i, v := range vec {
 		if i > 0 {

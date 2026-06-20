@@ -23,13 +23,13 @@ type QueryResult struct {
 }
 
 var mockNodes = [][]any{
-	{"person_bahlil", "Person", "Name: Bahlil, Aliases: Bro, VP, Bahlil"},
+	{"person_bahlil", "Person", "Name: Bahlil, Aliases: Bro, Bahlil"},
 	{"person_rafid", "Person", "Name: Rafid Harsyah, Aliases: Rapit, Rafid"},
-	{"person_rafif", "Person", "Name: Rafif Ilmany, Aliases: Pip, Rafif"},
-	{"person_rezonaldo", "Person", "Name: Rezonaldo, Aliases: Jon, Rezonaldo"},
-	{"person_apta", "Person", "Name: Apta, Aliases: Apta"},
-	{"person_gilang", "Person", "Name: Gilang Muhamad, Aliases: Gilang, Lang"},
-	{"person_jeslyn", "Person", "Name: Jeslyn, Aliases: Jes, Jeslyn"},
+	{"person_rafif", "Person", "Name: Rafif Ilmany, Aliases: Pip, Rafif, rafif_ilmany_ieee25"},
+	{"person_rezonaldo", "Person", "Name: Rezonaldo, Aliases: Jon, Rezonaldo, rezonaldo_ieee__, VP, Vice President of External"},
+	{"person_apta", "Person", "Name: Apta, Aliases: Apta, apta_ieee25"},
+	{"person_gilang", "Person", "Name: Gilang Muhamad W, Aliases: Gilang, Lang, Gilang Muhamad, m3_117_gilang_muhamad_w, M3-117_Gilang Muhamad W, You, THE USER"},
+	{"person_jeslyn", "Person", "Name: Jeslyn, Aliases: Jes, Jeslyn, jeslyn_ieee"},
 	{"person_naufal", "Person", "Name: Naufal, Aliases: Naufal, Opal"},
 	{"person_rendi", "Person", "Name: Rendi Ramadana, Aliases: Ren, Rendi"},
 	{"person_nadine", "Person", "Name: Nadine, Aliases: Din, Nadine"},

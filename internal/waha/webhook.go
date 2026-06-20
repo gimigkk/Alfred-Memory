@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -103,7 +105,7 @@ func (b *ConversationBlock) FormatTranscript() string {
 	for _, m := range b.Messages {
 		sender := m.Payload.From
 		if m.Payload.FromMe {
-			sender = "Me"
+			sender = "THE USER"
 		} else if m.Payload.Participant != "" {
 			sender = m.Payload.Participant
 		}
@@ -113,8 +115,16 @@ func (b *ConversationBlock) FormatTranscript() string {
 			sender = sender[:len(sender)-5]
 		}
 		
+		if strings.Contains(strings.ToLower(sender), "gilang") {
+			sender = "THE USER"
+		}
+		
+		body := m.Payload.Body
+		re := regexp.MustCompile(`(?i)(@)?(m3-117_)?gilang( muhamad w)?`)
+		body = re.ReplaceAllString(body, "@THE USER")
+		
 		t := time.Unix(m.Payload.Timestamp, 0).Format("2006-01-02 15:04:05")
-		transcript += fmt.Sprintf("[%s][%s]: %s\n", t, sender, m.Payload.Body)
+		transcript += fmt.Sprintf("[%s][%s]: %s\n", t, sender, body)
 	}
 	return transcript
 }
