@@ -20,7 +20,7 @@ The prompts will be stored as markdown files in an `assets/prompts/` directory u
 │       ├── extraction_skill.md     # Persona & Phase 1 rules
 │       └── linking_skill.md        # Identity Linking rules
 ├── internal/
-│   ├── agent/                      # Groq client, Extraction/Linking Orchestrator
+│   ├── agent/                      # LLM Router, ReAct Orchestrator & Native Go Validators
 │   ├── config/                     # Environment loading (.env)
 │   ├── db/                         # LadybugDB & SQLite managers + Schema Setup
 │   ├── embed/                      # Gemini Client for vector generation
@@ -59,13 +59,12 @@ Based on the Decision Log, all nodes (except `Person`) get a `content`, `history
 ## 3. Execution Pipeline (The Webhook Flow)
 When a mock WAHA `curl` hits `/api/webhook`:
 1. **Debounce:** The system aggregates messages into a `ConversationBlock`.
-2. **Phase 1 (Blind Extract):** Sends the `raw_transcript` + `extraction_skill.md` to Groq. Groq outputs candidate JSON nodes (no graph access).
-3. **RAG Intermediary:** The Go backend automatically embeds the candidates and runs `query_rag` against LadybugDB to fetch relevant graph context (like existing Persons or Events).
-4. **Phase 2 (Link):** Sends the Candidates + Graph Context + `linking_skill.md` to Groq. Groq outputs final `CREATE_NODE` or `UPDATE_NODE` mutations.
-5. **Commit:** The Go backend executes the Cypher mutations in LadybugDB.
+2. **Orchestrator Init:** The Go backend initializes the `llmRouter` (Gemini-primary) and prepares the tool definitions (`extract_transcript_manifest`, `query_rag`, `commit_mutations`).
+3. **Agentic ReAct Loop:** The LLM reads the transcript, pulls a line-by-line manifest, and enters a thought loop. It autonomously queries the `query_rag` tool to resolve participant identities and detect existing events before drafting any DB operations.
+4. **Structural Validation:** When the agent calls `commit_mutations`, the Go backend intercepts the JSON payload. A suite of multi-pass structural validators scrubs the mutations to ensure edge directionality, user resolution, and invariant compliance. Rejected edges are stripped.
+5. **Commit:** The Go backend executes the surviving Cypher mutations in LadybugDB.
 
 ## 4. Verification Plan
-1. Initialize the new root module and delete `phase0-rag`.
-2. Send a mocked WAHA JSON payload via `curl` containing a conversation where "Bahlil" asks the user for a "DPP design by Friday".
-3. Query LadybugDB to ensure a `Person` node for Bahlil, a `Task` node for the design, and a `ConversationBlock` node were created and correctly linked via `CAUSED_BY`.
-4. Check the SQLite database to ensure the Friday deadline was logged in `reminders.db`.
+1. Send mocked WAHA JSON payloads via `curl` to ensure basic HTTP endpoint integration.
+2. Run the Deterministic Evaluation Harness (`go run cmd/eval/main.go`). This harness runs the agent against a fixed transcript fixture `N` times in a `dryRun` sandbox.
+3. Validate the pass-rate table to ensure `10/10` adherence to Hard Invariants (no directional violations, identity integrity) and observe Soft Completeness metrics.

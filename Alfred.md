@@ -3,7 +3,7 @@
 
 > **Status:** Planning / Pre-development
 > **Last updated:** June 14, 2026 (revalidated + GraphRAG architecture)
-> **Stack:** Golang Backend · LadybugDB · SQLite · Groq API · WAHA (GOWS) · PWA Frontend · Ubuntu 24.04 VPS (4GB RAM / 8GB Storage)
+> **Stack:** Golang Backend · LadybugDB · SQLite · Gemini API (Router) · WAHA (GOWS) · PWA Frontend · Ubuntu 24.04 VPS (4GB RAM / 8GB Storage)
 
 ---
 
@@ -98,7 +98,7 @@ Not just a smart notes app. Alfred is closer to a personal epistemics engine - s
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  LLM EXTRACTION PIPELINE                    │
-│   Groq (primary) → open-weight fallback chain               │
+│   Gemini (primary) → Flash/Pro fallback chain               │
 │   Extracts: Tasks, Events, Insights, People,                │
 │             Quotes, Relationships, Deadlines                │
 │   Flags quote-worthy text (stored verbatim)                 │
@@ -209,22 +209,32 @@ Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced
 ## 6. LLM Extraction Pipeline
 
 ### Agentic Ingestion Loop
-When a block commits, processing runs in a fully Agentic ReAct loop to maximize accuracy and resolve coreferences:
-1. **Agent Investigation:** The LLM receives the raw transcript and is equipped with a `query_rag` tool. It reads the chat, and if it encounters ambiguous entities (e.g. "him", "the event"), it calls `query_rag` to fetch subgraph context from the vault. It enters a "thought loop", continuously fetching context until it resolves the references.
-2. **Commit Mutations:** Once the agent is confident it has resolved all entities (or determined they truly cannot be resolved and require `needs_clarification`), it calls the `commit_mutations` tool. This outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions directly to the Go backend.
+When a block commits, processing runs in a fully Agentic ReAct loop driven by the Go Orchestrator to maximize accuracy and resolve coreferences. It utilizes three primary tools:
+1. **`extract_transcript_manifest`**: The LLM must call this first to sequentially enumerate every line in the transcript, ensuring no context is skipped.
+2. **`query_rag`**: Used to fetch subgraph context from the vault. The agent continuously fetches context until it resolves the references (e.g., matching User identities, resolving aliases, checking for duplicate events).
+3. **`commit_mutations`**: Outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions, along with `manifest_accounting` detailing how every transcript line was handled.
+
+### Go Structural Validation Layer
+Before any mutation touches LadybugDB, it is intercepted by a multi-pass Go validation layer within the Orchestrator. 
+- **Directional Enforcement:** Edges must strictly originate from `Person` or `Task` and point outward (e.g., `ASSIGNED_TO` goes Person -> Task). Inverse structures are hard-rejected.
+- **Null Hypothesis (Events):** Forces the agent to prove an event match rather than hallucinate links.
+- **User Resolution:** Ensures "The User" is natively resolved via `query_rag` rather than skipped as a magical entity placeholder.
+Any mutation failing structural invariants logs a `[REJECTED EDGE]` and is stripped out, protecting the graph topology from hallucination.
+
+### Deterministic Evaluation Harness
+To prevent regression, the pipeline includes an automated evaluation harness (`cmd/eval/main.go`). It runs the agentic loop `N` times against fixed transcript fixtures in a `dryRun` state (bypassing DB commits). It produces a strict pass-rate table grading two categories:
+- **Hard Invariants:** Must be 100% (e.g., directional integrity, no fabricated user nodes).
+- **Soft Completeness:** Grades variance in reasoning (e.g., task creation rate, speaker coverage).
 
 ### Cross-Block Event Deduplication
-The Phase 2 linking agent enforces strict explicit keyword matching. If no alias matches but the block is temporally proximate to a known event, the agent still flags `needs_clarification` and pushes to the Memory Review Inbox rather than silently merging.
+The agent enforces strict explicit keyword matching. If no alias matches but the block is temporally proximate to a known event, the agent still flags `needs_clarification` and pushes to the Memory Review Inbox rather than silently merging.
 
 ### Language Boundaries
-- **Storage (Database properties):** Stored explicitly in **Indonesian**. This matches the vocabulary of real messages, ensuring keyword searches (BM25) and fuzzy lookups match naturally without losing semantic nuance in translation.
-- **Reasoning (Agent Logic):** Done strictly in **English**. The LLM uses English for its internal monologue (`inner_thoughts`), tool selection, and structure-parsing, as LLMs have significantly stronger logical capabilities on English-trained data.
+- **Storage (Database properties):** Stored explicitly in **Indonesian**. 
+- **Reasoning (Agent Logic):** Done strictly in **English**. The LLM uses English for its internal monologue, tool selection, and structure-parsing.
 
 ### LLM Fallback Chain
-Groq is the primary inference provider. If a call fails, the system walks down a prioritized list of fallback model APIs in a try/catch loop until one succeeds.
-
-### Prompt Caching
-Alfred's system prompt is long and resent on every API call - including every agent reasoning turn during query flow (the auto-called `query_rag`, plus however many re-queries, writes, or hint requests the agent makes; no fixed turn cap under Hybrid GraphRAG). Groq's prompt caching halves input token costs on repeated prompt prefixes and does not count cached tokens toward rate limits. Prompt caching must be enabled on all extraction and query-flow calls.
+Gemini API is the primary inference provider (via `llmRouter`). If a call hits rate limits (HTTP 429), the system walks down a prioritized list of fallback models (e.g., Gemini Pro Preview -> Flash -> Custom Tools) in a try/catch loop until one succeeds, ensuring zero dropped blocks.
 
 ---
 
@@ -518,7 +528,7 @@ A Go cron job runs on a configurable interval (e.g. every hour):
 2. Fire push notification via PWA Push API
 3. Update `status` to `sent`
 
-The cron never touches LadybugDB and never calls Groq.
+The cron never touches LadybugDB and never calls the LLM.
 
 ### Immediate Push on `needs_clarification`
 Any reminder or node flagged `needs_clarification` is pushed to the user **immediately upon commit** - it does not wait for the cron. This rule applies system-wide: the cron handles scheduled pending reminders only; anything requiring user input is surfaced right away.
@@ -584,9 +594,9 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 | Graph DB | LadybugDB via `go-ladybug` ⚠️ | [ladybug](https://github.com/LadybugDB/ladybug) · [go-ladybug](https://github.com/LadybugDB/go-ladybug) · [docs](https://docs.ladybugdb.com) | In-process C++ engine, HNSW vector index, BM25 full-text search, PageRank, Kuzu's open-source successor. **⚠️ go-ladybug is low-activity (15 stars, 3 forks) — validate in Phase 0 before depending on it.** |
 | GraphRAG | Port of `ladybug-rag` to Go | [ladybug-rag (Python ref)](https://github.com/Volland/ladybug-rag) | Hybrid retrieval: HNSW vector search + Cypher graph expand + RRF fusion + PageRank. ~100 lines of Go. Ported in Phase 0. |
 | Reminder DB | SQLite (`reminders.db`) via `mattn/go-sqlite3` | [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3) | Single file, no server, concurrent-safe, native query support |
-| LLM | Groq API (`llama-3.3-70b-versatile`) | [groq.com](https://console.groq.com) | Free tier generous enough for personal scale, fast inference, prompt caching |
+| LLM | Gemini API (`gemini-3-pro-preview` / `flash`) | [aistudio.google.com](https://aistudio.google.com) | Strong multi-turn tool calling, robust fallback chain handling |
 | Embeddings | Google Gemini API (`gemini-embedding-2`) | — | External API to avoid loading vector models into 4GB RAM. **Must pin one model — embedding model used at write time must match query time exactly.** |
-| STT (Onboarding) | Groq Whisper API | [docs](https://console.groq.com/docs/speech-text) | Already in stack. One HTTP call. Late-V1 feature. |
+| STT (Onboarding) | Gemini Audio API | [docs](https://console.groq.com/docs/speech-text) | Already in stack. One HTTP call. Late-V1 feature. |
 | WhatsApp | WAHA + GOWS WebSockets | — | Proven webhook provider |
 | Push Notifications | `SherClockHolmes/webpush-go` | [webpush-go](https://github.com/SherClockHolmes/webpush-go) | VAPID-based Web Push, drop-in for PWA push notif delivery |
 | Auth | `golang-jwt/jwt` | [golang-jwt](https://github.com/golang-jwt/jwt) | Standard Go JWT library for credential gate |
@@ -716,7 +726,7 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 20 | **Reminders Owned by Main Agent, Not Nightwatch** | Nightwatch is DB maintenance only. Reminder creation requires the agent context that exists in extraction and query flows. | Jun 13, 2026 |
 | 21 | **Dumb Cron for Reminder Dispatch** | Intentionally LLM-free. Pure deadline scanner: query SQLite → fire push notif → mark sent. | Jun 13, 2026 |
 | 22 | **Immediate Push on needs_clarification** | Flagged nodes push immediately upon commit, not queued for cron. Applies system-wide. | Jun 13, 2026 |
-| 23 | **Prompt Caching** | System prompt is resent on every LLM call. Groq caching halves input token costs on repeated prefixes; cached tokens don't count toward rate limits. | Jun 13, 2026 |
+| 23 | **Prompt Caching** | System prompt is resent on every LLM call. Gemini context caching reduces input token costs on repeated prefixes; cached tokens don't count toward rate limits. | Jun 13, 2026 |
 | 24 | **Two-Phase Extraction: Extract then Link** | Phase 1 reads the block, outputs candidate nodes with no graph access. Phase 2 traverses the vault to dedup and link. Conflating both degrades quality on both. | Jun 13, 2026 |
 | 25 | **Explicit Keyword Linking Only** | Nodes linked only if source text explicitly references the target by name or alias. No implicit linking from LLM background knowledge. Every edge must be justifiable from the node's own content. | Jun 13, 2026 |
 | 26 | **Aliases as First-Class Concept Across All Node Types** | Aliases are not just a Person concern. Events, Tasks, and other nodes are referred to informally in Indonesian chat ("rapat tadi", "meeting kemarin"). The linking agent in Phase 2 must search against aliases, not just canonical names, otherwise the explicit keyword rule breaks on informal language. Schema redesign required. | Jun 13, 2026 |
@@ -743,7 +753,7 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 47 | **Phase 0: Port ladybug-rag to Go First** | go-ladybug is low-activity (15 stars, 3 forks) with known early binding issues. Validate foundation in ~100-line project before Alfred depends on it. | Jun 14, 2026 |
 | 48 | **Attribution Uncertainty vs Duplicate Detection: Different Urgency** | "Task might be yours" = immediate push. "These two nodes might be the same event" = Nightwatch queue. Separated in Memory Review Inbox UX with different push weights. | Jun 14, 2026 |
 | 49 | **Trust Calibration as Explicit First-Weeks Goal** | Log how often the user agrees with Alfred's flags vs dismisses them. Real metric for whether the certainty bar is calibrated correctly. | Jun 14, 2026 |
-| 50 | **Onboarding: Conversational Seeding, Late V1** | Cold start via conversational flow in Alfred's persona (not a form). Seeded nodes carry `source: "user_declared"` — Nightwatch never auto-merges them without confirmation. STT via Groq Whisper. Late-V1 feature. | Jun 14, 2026 |
+| 50 | **Onboarding: Conversational Seeding, Late V1** | Cold start via conversational flow in Alfred's persona (not a form). Seeded nodes carry `source: "user_declared"` — Nightwatch never auto-merges them without confirmation. STT via Gemini Audio API. Late-V1 feature. | Jun 14, 2026 |
 | 51 | **Markdown Node Files Cut** | Derived LadybugDB mirror not used by agent or search — only for human inspection. PWA observability layer serves that purpose. | Jun 13, 2026 |
 | 52 | **Nodes Modified In Place, Not Versioned** | `content` overwritten with current truth; old value prepended to `history STRING[]`. No duplicate nodes or version chains. | Jun 13, 2026 |
 | 53 | **`history STRING[]` - Human-Readable Changelog** | Entries are self-contained strings: `"YYYY-MM-DD HH:MM - [narrative]"`, newest first. Read by LLM as a changelog without parsing. Only accessed when the query explicitly requires it. | Jun 13, 2026 |
