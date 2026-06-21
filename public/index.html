@@ -9,9 +9,14 @@
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
-    <div class="glass-header">
-        <h1>Alfred Memory Explorer</h1>
-        <p>Memory Vault Viewer</p>
+    <div class="left-container">
+        <div class="glass-header">
+            <h1>Alfred Memory Explorer</h1>
+            <p>Memory Vault Viewer</p>
+        </div>
+        <div id="side-panel" class="side-panel hidden">
+            <div id="side-panel-content"></div>
+        </div>
     </div>
     <div id="mynetwork"></div>
     <script src="app.js"></script>
