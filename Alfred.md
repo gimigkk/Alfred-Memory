@@ -214,6 +214,11 @@ When a block commits, processing runs in a fully Agentic ReAct loop driven by th
 2. **`query_rag`**: Used to fetch subgraph context from the vault. The agent continuously fetches context until it resolves the references (e.g., matching User identities, resolving aliases, checking for duplicate events). The mock validator falls back to token-overlap matching to accurately simulate the fuzziness of the real Vector Search (HNSW).
 3. **`commit_mutations`**: Outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions. **This tool is strictly transactional and all-or-nothing**: if validation fails, the entire batch is rejected. This design forces the agent to resolve the error and resubmit the complete, corrected set of mutations, preventing state-tracking bugs caused by incremental delta updates.
 
+### Schema-Based Graph Construction & Clarity Constraints
+To prevent LLM "tunnel vision" (overfitting to few-shot examples) and graph hallucination, the ingestion agent operates under strict structural constraints:
+- **Schema-Defined Topology:** Graph topologies (allowed incoming and outgoing edges) are explicitly defined within the schema constraints of the prompt, rather than relying on textual rules or brittle examples. The LLM mathematically maps outgoing edges (e.g., `PART_OF` for Tasks, `ASSIGNED_TO`/`MENTIONED_IN` for Persons) directly into the mutation payloads.
+- **The Clarity Checklist:** The "Default to Uncertainty" rule requires all new entities to start with `needs_clarification: true`. To toggle this to `false`, the LLM is forced to output a strict 5-point checklist (Who, What, When, Why, Destination) directly inside the `clarification_basis` JSON property. This moves the burden of proof from a "soft" prompt instruction into a hard structural payload requirement.
+
 
 ### Go Structural Validation Layer
 Before any mutation touches LadybugDB, it is intercepted by a multi-pass Go validation layer within the Orchestrator. 
