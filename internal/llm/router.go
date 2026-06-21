@@ -114,6 +114,17 @@ func cleanJSON(s string) string {
 	return strings.TrimSpace(s)
 }
 
+func stripSpaces(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		if r != ' ' && r != '\t' && r != '\n' && r != '\r' {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}
+
+
 func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, tools []ToolDef, executor func(name, args string) (string, error)) (string, error) {
 	toolsJSON, _ := json.MarshalIndent(tools, "", "  ")
 	fullSystemPrompt := systemPrompt + "\n\nYou MUST respond ONLY with a JSON object. You must ALWAYS include your reasoning in a 'thought' field. To call a tool, return:\n{\"thought\": \"your reasoning...\", \"tool_name\": \"...\", \"arguments\": {...}}\n\nTools available:\n" + string(toolsJSON)
@@ -121,6 +132,9 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 	history := []Message{
 		{Role: "user", Content: userPrompt},
 	}
+
+	var lastCommitArgs string
+	var lastCommitErr string
 
 	for step := 0; step < 15; step++ {
 		var content string
@@ -190,12 +204,23 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 
 		if toolName != "" {
 			argsJSON, _ := json.Marshal(parseAttempt.Arguments)
-			toolResult, err := executor(toolName, string(argsJSON))
+			argsStr := string(argsJSON)
+			toolResult, err := executor(toolName, argsStr)
 			if err != nil {
+				errMsg := err.Error()
 				toolResult = fmt.Errorf("tool error: %v", err).Error()
+				if toolName == "commit_mutations" {
+					normCurrent := stripSpaces(argsStr)
+					normLast := stripSpaces(lastCommitArgs)
+					if normCurrent == normLast && lastCommitErr == errMsg {
+						toolResult += "\n\nWARNING: Your last two attempts were nearly identical and both failed for the same reason. Re-read the error carefully — repeating the same mutation will not work. If you believe your mutation is correct, the validator itself may have a bug; in that case, try an alternative representation (e.g., a different but still rule-compliant edge) rather than repeating the exact same payload."
+					}
+					lastCommitArgs = argsStr
+					lastCommitErr = errMsg
+				}
 			} else {
 				if toolName == "commit_mutations" {
-					return string(argsJSON), nil
+					return argsStr, nil
 				}
 			}
 			history = append(history, Message{Role: "user", Content: "Tool Result:\n" + toolResult})

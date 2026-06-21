@@ -480,11 +480,14 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 							
 							checkID := func(id string, typ string) bool {
 								if typ != "Person" { return false }
-								speakerTokens := tokenize(speaker)
-								if isSubslice(speakerTokens, tokenize(id)) { return true }
+								speakerTokens := filterNoiseTokens(tokenize(speaker))
+								if len(speakerTokens) == 0 {
+									return false // nothing meaningful left to match on
+								}
+								if hasTokenOverlap(speakerTokens, tokenize(id)) { return true }
 								contentStr := validToolNodeContent[id]
 								if contentStr == "" { contentStr = batchCreatedContent[id] }
-								if isSubslice(speakerTokens, tokenize(contentStr)) { return true }
+								if hasTokenOverlap(speakerTokens, tokenize(contentStr)) { return true }
 								return false
 							}
 
@@ -840,4 +843,42 @@ func isTokenSubset(sub, main []string) bool {
 		}
 	}
 	return true
+}
+
+func hasTokenOverlap(sub, main []string) bool {
+	if len(sub) == 0 {
+		return false
+	}
+	mainSet := make(map[string]bool, len(main))
+	for _, t := range main {
+		mainSet[t] = true
+	}
+	for _, t := range sub {
+		if mainSet[t] {
+			return true
+		}
+	}
+	return false
+}
+
+func filterNoiseTokens(tokens []string) []string {
+	var filtered []string
+	numericRe := regexp.MustCompile(`^[0-9]+$`)
+	for _, t := range tokens {
+		if numericRe.MatchString(t) {
+			continue // drop purely numeric cohort years / IDs
+		}
+		// TODO: "ieee" is dataset-specific; consider a configurable noise-word list if Alfred is used beyond this org
+		if t == "ieee" {
+			continue // drop cohort/org suffix
+		}
+		if len(t) < 3 {
+			continue // drop short tokens like "m", "w"
+		}
+		filtered = append(filtered, t)
+	}
+	if len(filtered) == 0 {
+		return tokens // filtering would remove everything — fall back to unfiltered
+	}
+	return filtered
 }

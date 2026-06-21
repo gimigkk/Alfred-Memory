@@ -29,15 +29,18 @@ func runSpeakerCoverageCheck(extractedSpeakers []string, validToolNodeContent, v
 					if typ != "Person" {
 						return false
 					}
-					speakerTokens := tokenize(speaker)
-					if isSubslice(speakerTokens, tokenize(id)) {
+					speakerTokens := filterNoiseTokens(tokenize(speaker))
+					if len(speakerTokens) == 0 {
+						return false
+					}
+					if hasTokenOverlap(speakerTokens, tokenize(id)) {
 						return true
 					}
 					contentStr := validToolNodeContent[id]
 					if contentStr == "" {
 						contentStr = batchCreatedContent[id]
 					}
-					if isSubslice(speakerTokens, tokenize(contentStr)) {
+					if hasTokenOverlap(speakerTokens, tokenize(contentStr)) {
 						return true
 					}
 					return false
@@ -318,4 +321,114 @@ func TestSingleTokenCollision(t *testing.T) {
 		t.Fatal("Case B failed: Expected duplicate Person 'Rapit' to be rejected, but it passed!")
 	}
 	t.Logf("Case B passed: Correctly rejected duplicate Person 'Rapit': %v", errB)
+}
+
+// 5. TestSpeakerCoverageHandleWithSuffix: Verify that a speaker handle with noise suffixes (e.g. "nadine_ieee26") matches the clean person node "person_nadine".
+func TestSpeakerCoverageHandleWithSuffix(t *testing.T) {
+	extractedSpeakers := []string{"nadine_ieee26"}
+
+	validToolNodeTypes := map[string]string{
+		"person_nadine": "Person",
+	}
+	validToolNodeContent := map[string]string{
+		"person_nadine": "Name: Nadine, Aliases: Din, Nadine",
+	}
+
+	batchCreatedNodeTypes := make(map[string]string)
+	batchCreatedContent := make(map[string]string)
+
+	mutRaw := []any{
+		map[string]any{
+			"node_id":   "person_nadine",
+			"operation": "UPDATE_NODE",
+			"add_edges": []any{
+				map[string]any{
+					"target_node_id": "temp_event_gobak_sodor",
+					"rel_type":      "MENTIONED_IN",
+					"evidence_refs": []any{
+						map[string]any{"line_index": 12, "quote": "Iya"},
+					},
+				},
+			},
+		},
+	}
+
+	err := runSpeakerCoverageCheck(extractedSpeakers, validToolNodeContent, validToolNodeTypes, batchCreatedContent, batchCreatedNodeTypes, mutRaw)
+	if err != nil {
+		t.Fatalf("Expected speaker coverage check to pass for handle with suffix, but got: %v", err)
+	}
+}
+
+// 6. TestSpeakerCoverageNoiseFalseMatch: Verify that speaker "jon_smith_ieee99" does NOT match an unrelated Person node that only matches on the noise token ("ieee") or suffix.
+func TestSpeakerCoverageNoiseFalseMatch(t *testing.T) {
+	// Nadine is the only speaker, but the update mutation is on an unrelated Person node (person_apta) that only shares the "ieee" token
+	extractedSpeakers := []string{"jon_smith_ieee99"}
+
+	validToolNodeTypes := map[string]string{
+		"person_apta": "Person",
+	}
+	validToolNodeContent := map[string]string{
+		"person_apta": "Name: Apta, Aliases: Apta, apta_ieee25", // "ieee" is present
+	}
+
+	batchCreatedNodeTypes := make(map[string]string)
+	batchCreatedContent := make(map[string]string)
+
+	mutRaw := []any{
+		map[string]any{
+			"node_id":   "person_apta",
+			"operation": "UPDATE_NODE",
+			"add_edges": []any{
+				map[string]any{
+					"target_node_id": "temp_event_gobak_sodor",
+					"rel_type":      "MENTIONED_IN",
+					"evidence_refs": []any{
+						map[string]any{"line_index": 12, "quote": "Iya"},
+					},
+				},
+			},
+		},
+	}
+
+	err := runSpeakerCoverageCheck(extractedSpeakers, validToolNodeContent, validToolNodeTypes, batchCreatedContent, batchCreatedNodeTypes, mutRaw)
+	if err == nil {
+		t.Fatal("Expected speaker coverage check to fail due to noise-only match, but it passed!")
+	}
+	t.Logf("Correctly rejected false noise match: %v", err)
+}
+
+// 7. TestSpeakerCoverageShortNameOnly: Verify that fallback to unfiltered tokens allows matching speaker "jo_99" (where "jo" is 2 chars, under length floor) to a node containing "Jo".
+func TestSpeakerCoverageShortNameOnly(t *testing.T) {
+	extractedSpeakers := []string{"jo_99"}
+
+	validToolNodeTypes := map[string]string{
+		"person_jo": "Person",
+	}
+	validToolNodeContent := map[string]string{
+		"person_jo": "Name: Jo, Aliases: Jo",
+	}
+
+	batchCreatedNodeTypes := make(map[string]string)
+	batchCreatedContent := make(map[string]string)
+
+	mutRaw := []any{
+		map[string]any{
+			"node_id":   "person_jo",
+			"operation": "UPDATE_NODE",
+			"add_edges": []any{
+				map[string]any{
+					"target_node_id": "temp_event_gobak_sodor",
+					"rel_type":      "MENTIONED_IN",
+					"evidence_refs": []any{
+						map[string]any{"line_index": 12, "quote": "Iya"},
+					},
+				},
+			},
+		},
+	}
+
+	err := runSpeakerCoverageCheck(extractedSpeakers, validToolNodeContent, validToolNodeTypes, batchCreatedContent, batchCreatedNodeTypes, mutRaw)
+	if err != nil {
+		t.Fatalf("Expected speaker coverage check to pass for short name fallback, but got: %v", err)
+	}
 }
