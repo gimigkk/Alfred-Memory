@@ -6,6 +6,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gimigkk/Alfred-Memory/assets/prompts"
 	"github.com/gimigkk/Alfred-Memory/internal/embed"
@@ -688,13 +689,41 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 
 	log.Printf("\033[32m✔ Agent generated %d mutations.\033[0m Executing against DB...\n\n", len(linkOut.Mutations))
 
+	// --- ID REMAPPING PHASE ---
+	// Swap temp_ IDs for real UUIDs (using UnixNano) before execution
+	idMap := make(map[string]string)
 	for i, m := range linkOut.Mutations {
-		content, _ := m.Properties["content"].(string)
-
-		// Fallback for missing node ID
 		if m.NodeID == "" {
 			m.NodeID = fmt.Sprintf("temp_%s_%d", m.NodeType, i)
+			linkOut.Mutations[i].NodeID = m.NodeID
 		}
+
+		if m.Operation == "CREATE_NODE" && strings.HasPrefix(m.NodeID, "temp_") {
+			// Preserve the semantic intent of the temp ID for human readability
+			readablePart := strings.TrimPrefix(m.NodeID, "temp_")
+			shortHash := fmt.Sprintf("%x", time.Now().UnixNano()+int64(i))
+			if len(shortHash) > 6 {
+				shortHash = shortHash[len(shortHash)-6:]
+			}
+			newID := fmt.Sprintf("%s_%s", readablePart, shortHash)
+			
+			idMap[m.NodeID] = newID
+			linkOut.Mutations[i].NodeID = newID
+		}
+	}
+
+	// Update all edges to point to the permanent IDs
+	for i := range linkOut.Mutations {
+		for j, edge := range linkOut.Mutations[i].AddEdges {
+			if mappedID, exists := idMap[edge.TargetNodeID]; exists {
+				linkOut.Mutations[i].AddEdges[j].TargetNodeID = mappedID
+			}
+		}
+	}
+	// --------------------------
+
+	for i, m := range linkOut.Mutations {
+		content, _ := m.Properties["content"].(string)
 
 		// --- CLARITY GUARD ---
 		if cb, ok := m.Properties["clarification_basis"].(string); ok {
