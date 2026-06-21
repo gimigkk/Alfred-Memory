@@ -37,19 +37,16 @@ The prompts will be stored as markdown files in an `assets/prompts/` directory u
 ### LadybugDB Nodes
 Based on the Decision Log, all nodes (except `Person`) get a `content`, `history`, `created_at`, `aliases`, and `embedding` field.
 * `Person (id STRING, name STRING, phone_number STRING, aliases STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN)`
-* `Circle (id STRING, name STRING, aliases STRING[], content STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])`
-* `Task (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, due_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])`
-* `Event (id STRING, content STRING, aliases STRING[], status STRING, start_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])`
-* `Insight (id STRING, content STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])`
-* `ConversationBlock (id STRING, chat_id STRING, raw_transcript STRING, created_at TIMESTAMP)`
+* `Circle (id STRING, name STRING, aliases STRING[], content STRING, verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])`
+* `Task (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, due_date TIMESTAMP, priority STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
+* `Event (id STRING, content STRING, aliases STRING[], status STRING, event_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
+* `Insight (id STRING, content STRING, category STRING, confidence STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
 
 ### LadybugDB Edges
-* `PARTICIPANT_IN (FROM Person TO Event, role STRING)`
-* `MEMBER_OF (FROM Person TO Circle, role STRING)`
-* `KNOWS (FROM Person TO Person, descriptor STRING, context STRING)`
-* `CAUSED_BY (FROM Task TO ConversationBlock, context STRING)`
-* `EVIDENCED_BY (FROM Insight TO ConversationBlock, context STRING)`
-* `LINKS_TO (FROM Task TO Event, context STRING)` *(Generic link)*
+* `PARTICIPANT_IN` (FROM Person TO Event, role STRING)
+* `MEMBER_OF` (FROM Person TO Circle, role STRING)
+* `KNOWS` (FROM Person TO Person, descriptor STRING, context STRING)
+* `LINKS_TO` (FROM Task TO Event, context STRING) *(Generic link)*
 
 ### SQLite Schema (`reminders.db`)
 * `Reminders (id TEXT PRIMARY KEY, node_id TEXT, deadline DATETIME, is_sent BOOLEAN, message TEXT)`
@@ -62,7 +59,7 @@ When a mock WAHA `curl` hits `/api/webhook`:
 2. **Orchestrator Init:** The Go backend initializes the `llmRouter` (Gemini-primary) and prepares the tool definitions (`extract_transcript_manifest`, `query_rag`, `commit_mutations`).
 3. **Agentic ReAct Loop:** The LLM reads the transcript, pulls a line-by-line manifest, and enters a thought loop. It autonomously queries the `query_rag` tool to resolve participant identities and detect existing events before drafting any DB operations.
 4. **Structural Validation:** When the agent calls `commit_mutations`, the Go backend intercepts the JSON payload. A suite of multi-pass structural validators scrubs the mutations to ensure edge directionality, user resolution, and invariant compliance. Rejected edges are stripped.
-5. **Commit:** The Go backend executes the surviving Cypher mutations in LadybugDB.
+5. **Commit:** The Go backend executes the surviving Cypher mutations in LadybugDB. Raw transcript provenance is handled via `verbatim` properties on nodes and `evidence_refs` (quotes) stored on edge structures, eliminating the need for a separate ConversationBlock graph node.
 
 ## 4. Verification Plan
 1. Send mocked WAHA JSON payloads via `curl` to ensure basic HTTP endpoint integration.

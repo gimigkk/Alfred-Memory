@@ -146,6 +146,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 										"properties": map[string]any{
 											"content":             map[string]any{"type": "string"},
 											"status":              map[string]any{"type": "string"},
+											"verbatim":            map[string]any{"type": "string"},
 											"needs_clarification": map[string]any{"type": "boolean"},
 											"clarification_basis": map[string]any{
 												"type":        "string",

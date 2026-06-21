@@ -356,11 +356,11 @@ function generateTooltipHTML(node) {
     } else if (group === 'Task') {
         orderedKeys = ['content', 'status', 'due_date', 'priority', 'aliases', 'verbatim', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
     } else if (group === 'Event') {
-        orderedKeys = ['content', 'status', 'start_date', 'aliases', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
+        orderedKeys = ['content', 'status', 'start_date', 'aliases', 'verbatim', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
     } else if (group === 'Insight') {
         orderedKeys = ['content', 'aliases', 'verbatim', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
     } else if (group === 'Circle') {
-        orderedKeys = ['name', 'aliases', 'content', 'history', 'created_at', 'needs_clarification'];
+        orderedKeys = ['name', 'aliases', 'content', 'verbatim', 'history', 'created_at', 'needs_clarification'];
     }
 
     const displayedKeys = new Set();

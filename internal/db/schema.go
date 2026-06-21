@@ -15,9 +15,9 @@ func InitLadybugSchema(conn *ladybug.Connection) error {
 	queries := []string{
 		// Nodes
 		"CREATE NODE TABLE Person (id STRING, name STRING, phone_number STRING, aliases STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, PRIMARY KEY(id))",
-		"CREATE NODE TABLE Circle (id STRING, name STRING, aliases STRING[], content STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
+		"CREATE NODE TABLE Circle (id STRING, name STRING, aliases STRING[], content STRING, verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
 		"CREATE NODE TABLE Task (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, due_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
-		"CREATE NODE TABLE Event (id STRING, content STRING, aliases STRING[], status STRING, start_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
+		"CREATE NODE TABLE Event (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, start_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
 		"CREATE NODE TABLE Insight (id STRING, content STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
 		"CREATE NODE TABLE ConversationBlock (id STRING, chat_id STRING, raw_transcript STRING, created_at TIMESTAMP, PRIMARY KEY(id))",
 

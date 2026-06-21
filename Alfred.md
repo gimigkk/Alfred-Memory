@@ -283,6 +283,7 @@ CREATE NODE TABLE Event (
     aliases STRING[],               -- ["sotq", "acara tadi", "event kemarin"]
     content STRING,                 -- Alfred's narrative of current state, written in Indonesian. Must acknowledge prior state if overwriting.
     history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
+    verbatim STRING,                -- Exact quote referencing the event (nullable)
     event_date TIMESTAMP,           -- Nullable if date unconfirmed
     status STRING,                  -- "planned" | "active" | "completed" | "cancelled" | "stale"
     created_at TIMESTAMP,
@@ -323,17 +324,7 @@ CREATE NODE TABLE Insight (
     PRIMARY KEY (id)
 );
 
--- 5. ConversationBlock: The atomic unit of processing. Holds the raw transcript.
-CREATE NODE TABLE ConversationBlock (
-    id STRING,
-    source STRING,                  -- "whatsapp"
-    chat_id STRING,                 -- Which group/chat this block came from
-    raw_transcript STRING,          -- Full message log including WAHA quote payloads, preserved as-is
-    content STRING,                 -- Alfred's narrative summary, written after extraction
-    status STRING,                  -- "open" | "committed" | "abandoned"
-    created_at TIMESTAMP,
-    PRIMARY KEY (id)
-);
+
 
 -- 6. Circle: A named group of people with shared context
 -- Replaces the need for a separate Organization node type.
@@ -345,6 +336,7 @@ CREATE NODE TABLE Circle (
     aliases STRING[],               -- Informal references to this group
     content STRING,                 -- Alfred's description of this group and its purpose
     history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
+    verbatim STRING,                -- Exact quote referencing the group (nullable)
     created_at TIMESTAMP,
     needs_clarification BOOLEAN,
     PRIMARY KEY (id)
@@ -393,7 +385,6 @@ CREATE REL TABLE CAUSED_BY (
 CREATE REL TABLE EVIDENCED_BY (
     FROM Insight TO Task,           -- Insight supported by a Task observation
     FROM Insight TO Event,          -- Insight supported by an Event observation
-    FROM Insight TO ConversationBlock, -- Insight supported by a specific block
     observed_at TIMESTAMP
 );
 
@@ -422,22 +413,9 @@ CREATE REL TABLE MEMBER_OF (
     since TIMESTAMP
 );
 
--- Every node traces back to its originating ConversationBlock
-CREATE REL TABLE SOURCED_FROM (
-    FROM Person TO ConversationBlock,
-    FROM Event TO ConversationBlock,
-    FROM Task TO ConversationBlock,
-    FROM Insight TO ConversationBlock,
-    FROM Circle TO ConversationBlock
-);
-```
-
 ### Storage & Purging Strategy
 - **Raw WhatsApp Messages:** Retained for 30 days as a temporary recovery buffer, then purged.
 - **LadybugDB:** Permanent storage engine. Nodes are rarely deleted; bad data is the only deletion trigger.
-
-#### Pre-Purge "Open Ends" Sweep
-On Day 30, before raw messages are deleted, the system runs a targeted sweep - **never** a blind audit of all expiring messages. Only `ConversationBlock` nodes still marked `status: open` or with a pending unassigned task are targeted. For these, the LLM writes a final historical narrative summary, marks the block `status: abandoned`, then deletes the raw text.
 
 ---
 
@@ -772,3 +750,4 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 60 | **Phase 0 Findings Locked** | Pinned APIs to `gemini-embedding-2` and `llama-3.3-70b-versatile`. `go-ladybug` requires Go 1.26+ (handled via `GOTOOLCHAIN=auto`) and CGO builds require `lbug.h` host headers. Vector Indexes strictly require a `FLOAT[768]` column rather than a string-based text index. | Jun 20, 2026 |
 | 61 | **No Example Bleed in Prompts** | Specific placeholder data in prompt examples causes LLM hallucination and overfitting ("Example Bleed"). Prompt examples must use highly abstract placeholders like `[ABSTRACT_REASON]` to force reliance on raw transcript text. | Jun 21, 2026 |
 | 62 | **Semantic Readable Node IDs** | Instead of generating purely random UUIDs (`node_1a2b3c...`) for new nodes, the orchestrator strips the LLM's `temp_` prefix and appends a 6-character hash to the semantic intent (e.g., `event_pembayaran_1a2b3c`). This guarantees DB uniqueness while keeping graph visualizer tooltips human-readable. | Jun 21, 2026 |
+| 63 | **ConversationBlock replaced by node-level verbatim** | Dropped ConversationBlock to avoid graph pollution. Provenance is now maintained directly on nodes via 'verbatim' and edges via 'evidence_refs'. | Jun 21, 2026 |
