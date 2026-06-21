@@ -679,6 +679,18 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			m.NodeID = fmt.Sprintf("temp_%s_%d", m.NodeType, i)
 		}
 
+		// --- CLARITY GUARD ---
+		if cb, ok := m.Properties["clarification_basis"].(string); ok {
+			cbLower := strings.ToLower(cb)
+			if strings.Contains(cbLower, "unknown") {
+				
+				if nc, hasNc := m.Properties["needs_clarification"].(bool); hasNc && !nc {
+					m.Properties["needs_clarification"] = true
+					log.Printf("   \033[33m[GUARD]\033[0m Overriding needs_clarification to TRUE due to missing context in basis.")
+				}
+			}
+		}
+
 		color := "\033[35m" // Magenta for CREATE
 		if m.Operation == "UPDATE_NODE" {
 			color = "\033[36m" // Cyan for UPDATE
@@ -710,17 +722,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			for _, ref := range e.EvidenceRefs {
 				quote := strings.TrimSpace(ref.Quote)
 
-				// Length and token heuristic check
-				if len(e.EvidenceRefs) < 2 {
-					if len(quote) < 5 {
-						failedQuotes = append(failedQuotes, fmt.Sprintf("'%s' (too short)", quote))
-						continue
-					}
-					if len(quote) < 8 && !strings.Contains(quote, " ") {
-						failedQuotes = append(failedQuotes, fmt.Sprintf("'%s' (single token too short)", quote))
-						continue
-					}
-				}
+				// Removed strict length heuristics. We will just check if the quote exists.
 
 				// The quote must exist either in the specific transcript line or in the tool results
 				passed := false
@@ -731,6 +733,11 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				}
 
 				if !passed && strings.Contains(lastToolResults, ref.Quote) {
+					passed = true
+				}
+
+				// Fallback: If LLM messed up the line index, search the whole transcript
+				if !passed && strings.Contains(transcript, ref.Quote) {
 					passed = true
 				}
 

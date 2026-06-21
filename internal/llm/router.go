@@ -42,6 +42,10 @@ func NewRouterClient(geminiKey, groqKey string) *RouterClient {
 func (c *RouterClient) fetchAvailableModels() {
 	c.Models = []string{}
 
+	var gemini3 []string
+	var others []string
+	var groqModels []string
+
 	// Fetch Gemini Models
 	geminiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models?key=%s", c.GeminiKey)
 	respG, err := http.Get(geminiURL)
@@ -53,11 +57,7 @@ func (c *RouterClient) fetchAvailableModels() {
 			} `json:"models"`
 		}
 		if json.NewDecoder(respG.Body).Decode(&resG) == nil {
-			var gemini3 []string
-			var others []string
 			for _, m := range resG.Models {
-				// gemini models return as "models/gemini-..."
-				// we want to skip embeddings, tts
 				name := m.Name
 				if strings.Contains(name, "gemini") && !strings.Contains(name, "embedding") && !strings.Contains(name, "tts") && !strings.Contains(name, "vision") {
 					short := strings.TrimPrefix(name, "models/")
@@ -68,8 +68,6 @@ func (c *RouterClient) fetchAvailableModels() {
 					}
 				}
 			}
-			c.Models = append(c.Models, gemini3...)
-			c.Models = append(c.Models, others...)
 		}
 	}
 
@@ -89,11 +87,17 @@ func (c *RouterClient) fetchAvailableModels() {
 			for _, m := range resGroq.Data {
 				name := m.ID
 				if !strings.Contains(name, "whisper") && !strings.Contains(name, "guard") && !strings.Contains(name, "safeguard") && !strings.Contains(name, "orpheus") {
-					c.Models = append(c.Models, "groq/"+name)
+					groqModels = append(groqModels, "groq/"+name)
 				}
 			}
 		}
 	}
+
+	// Assemble final prioritized list
+	c.Models = append(c.Models, gemini3...)
+	c.Models = append(c.Models, groqModels...)
+	c.Models = append(c.Models, others...)
+
 	log.Printf("Dynamically loaded %d models for Agentic Loop.", len(c.Models))
 }
 
