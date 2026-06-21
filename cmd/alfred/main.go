@@ -73,33 +73,52 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		
 		// 1. Fetch all nodes
-		resNodes, err := conn.Query("MATCH (n) RETURN n.id, label(n), n.content")
+		resNodes, err := conn.Query("MATCH (n) RETURN n.id, label(n), n.content, n.properties")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		
-		var nodes []map[string]string
+		var nodes []map[string]any
 		for resNodes.HasNext() {
 			row := resNodes.GetNext()
 			nodeID := row[0].(string)
 			nodeType := row[1].(string)
 			content := row[2].(string)
 
-			// Use content as label, but for Person nodes use the ID as a cleaner label
+			var properties map[string]any
+			if len(row) > 3 && row[3] != nil {
+				if props, ok := row[3].(map[string]any); ok {
+					properties = props
+				}
+			}
+			if properties == nil {
+				properties = make(map[string]any)
+			}
+
+			// Ensure content is populated in properties if not already present
+			if _, ok := properties["content"]; !ok && content != "" && nodeType != "Person" {
+				properties["content"] = content
+			}
+
+			// Use name or content as label
 			label := content
 			if nodeType == "Person" {
-				label = nodeID // e.g. "person_bahlil"
+				if name, ok := properties["name"].(string); ok && name != "" {
+					label = name
+				} else {
+					label = nodeID
+				}
 			}
 			if len(label) > 40 {
 				label = label[:37] + "..."
 			}
 
-			nodes = append(nodes, map[string]string{
-				"id":    nodeID,
-				"label": label,
-				"group": nodeType,
-				"title": fmt.Sprintf("[%s]\n\n%s", nodeType, content),
+			nodes = append(nodes, map[string]any{
+				"id":         nodeID,
+				"label":      label,
+				"group":      nodeType,
+				"properties": properties,
 			})
 		}
 		resNodes.Close()

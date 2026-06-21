@@ -697,9 +697,9 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 		}
 		log.Printf("%s🔨 Mutation: [%s] %s (ID: %s)\033[0m", color, m.Operation, m.NodeType, m.NodeID)
 
-		if m.Operation == "CREATE_NODE" || (m.Operation == "UPDATE_NODE" && m.NodeType != "" && content != "") {
+		if m.Operation == "CREATE_NODE" || (m.Operation == "UPDATE_NODE" && m.NodeType != "") {
 			if !dryRun {
-				ladybug.AddMockNode(m.NodeID, m.NodeType, content)
+				ladybug.AddMockNode(m.NodeID, m.NodeType, content, m.Properties)
 			}
 		}
 

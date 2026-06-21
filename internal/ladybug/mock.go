@@ -23,18 +23,18 @@ type QueryResult struct {
 }
 
 var mockNodes = [][]any{
-	{"person_bahlil", "Person", "Name: Bahlil, Aliases: Bro, Bahlil"},
-	{"person_rafid", "Person", "Name: Rafid Harsyah, Aliases: Rapit, Rafid"},
-	{"person_rafif", "Person", "Name: Rafif Ilmany, Aliases: Pip, Rafif, rafif_ilmany_ieee25"},
-	{"person_rezonaldo", "Person", "Name: Rezonaldo, Aliases: Jon, Rezonaldo, rezonaldo_ieee__, VP, Vice President of External"},
-	{"person_apta", "Person", "Name: Apta, Aliases: Apta, apta_ieee25"},
-	{"person_gilang", "Person", "Name: Gilang Muhamad W, Aliases: Gilang, Lang, Gilang Muhamad, m3_117_gilang_muhamad_w, M3-117_Gilang Muhamad W, You, THE USER"},
-	{"person_jeslyn", "Person", "Name: Jeslyn, Aliases: Jes, Jeslyn, jeslyn_ieee"},
-	{"person_naufal", "Person", "Name: Naufal, Aliases: Naufal, Opal, m_naufal_ieee__"},
-	{"person_rendi", "Person", "Name: Rendi Ramadana, Aliases: Ren, Rendi"},
-	{"person_nadine", "Person", "Name: Nadine, Aliases: Din, Nadine, nadine_ieee26"},
-	{"person_clint", "Person", "Name: Clint, Aliases: Clint"},
-	{"event_dpp", "Event", "Event presentasi design DPP hari Jumat"},
+	{"person_bahlil", "Person", "Name: Bahlil, Aliases: Bro, Bahlil", map[string]any{"name": "Bahlil", "aliases": []any{"Bro", "Bahlil"}, "needs_clarification": false}},
+	{"person_rafid", "Person", "Name: Rafid Harsyah, Aliases: Rapit, Rafid", map[string]any{"name": "Rafid Harsyah", "aliases": []any{"Rapit", "Rafid"}, "needs_clarification": false}},
+	{"person_rafif", "Person", "Name: Rafif Ilmany, Aliases: Pip, Rafif, rafif_ilmany_ieee25", map[string]any{"name": "Rafif Ilmany", "aliases": []any{"Pip", "Rafif", "rafif_ilmany_ieee25"}, "needs_clarification": false}},
+	{"person_rezonaldo", "Person", "Name: Rezonaldo, Aliases: Jon, Rezonaldo, rezonaldo_ieee__, VP, Vice President of External", map[string]any{"name": "Rezonaldo", "aliases": []any{"Jon", "Rezonaldo", "rezonaldo_ieee__", "VP", "Vice President of External"}, "needs_clarification": false}},
+	{"person_apta", "Person", "Name: Apta, Aliases: Apta, apta_ieee25", map[string]any{"name": "Apta", "aliases": []any{"Apta", "apta_ieee25"}, "needs_clarification": false}},
+	{"person_gilang", "Person", "Name: Gilang Muhamad W, Aliases: Gilang, Lang, Gilang Muhamad, m3_117_gilang_muhamad_w, M3-117_Gilang Muhamad W, You, THE USER", map[string]any{"name": "Gilang Muhamad W", "aliases": []any{"Gilang", "Lang", "Gilang Muhamad", "m3_117_gilang_muhamad_w", "M3-117_Gilang Muhamad W", "You", "THE USER"}, "needs_clarification": false}},
+	{"person_jeslyn", "Person", "Name: Jeslyn, Aliases: Jes, Jeslyn, jeslyn_ieee", map[string]any{"name": "Jeslyn", "aliases": []any{"Jes", "Jeslyn", "jeslyn_ieee"}, "needs_clarification": false}},
+	{"person_naufal", "Person", "Name: Naufal, Aliases: Naufal, Opal, m_naufal_ieee__", map[string]any{"name": "Naufal", "aliases": []any{"Naufal", "Opal", "m_naufal_ieee__"}, "needs_clarification": false}},
+	{"person_rendi", "Person", "Name: Rendi Ramadana, Aliases: Ren, Rendi", map[string]any{"name": "Rendi Ramadana", "aliases": []any{"Ren", "Rendi"}, "needs_clarification": false}},
+	{"person_nadine", "Person", "Name: Nadine, Aliases: Din, Nadine, nadine_ieee26", map[string]any{"name": "Nadine", "aliases": []any{"Din", "Nadine", "nadine_ieee26"}, "needs_clarification": false}},
+	{"person_clint", "Person", "Name: Clint, Aliases: Clint", map[string]any{"name": "Clint", "aliases": []any{"Clint"}, "needs_clarification": false}},
+	{"event_dpp", "Event", "Event presentasi design DPP hari Jumat", map[string]any{"content": "Event presentasi design DPP hari Jumat", "status": "planned", "needs_clarification": false}},
 }
 
 var mockEdges = [][]any{
@@ -42,8 +42,25 @@ var mockEdges = [][]any{
 }
 
 // Helper to inject agent mutations into the mock DB state
-func AddMockNode(id, nodeType, content string) {
-	mockNodes = append(mockNodes, []any{id, nodeType, content})
+func AddMockNode(id, nodeType, content string, properties map[string]any) {
+	for i, n := range mockNodes {
+		if n[0].(string) == id {
+			existingProps, ok := n[3].(map[string]any)
+			if !ok || existingProps == nil {
+				existingProps = make(map[string]any)
+			}
+			for k, v := range properties {
+				existingProps[k] = v
+			}
+			newContent := content
+			if newContent == "" {
+				newContent = n[2].(string)
+			}
+			mockNodes[i] = []any{id, nodeType, newContent, existingProps}
+			return
+		}
+	}
+	mockNodes = append(mockNodes, []any{id, nodeType, content, properties})
 }
 
 func AddMockEdge(from, to, relType string) {

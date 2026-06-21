@@ -6,8 +6,8 @@
 }
 
 body {
-    background: radial-gradient(circle at 50% 50%, #1e1e2f 0%, #0d0d16 100%);
-    color: #fff;
+    background: #f8f9fa;
+    color: #0f172a;
     height: 100vh;
     overflow: hidden;
     display: flex;
@@ -18,28 +18,24 @@ body {
     position: absolute;
     top: 20px;
     left: 20px;
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 16px;
-    padding: 20px 24px;
+    background: #ffffff;
+    border: none;
+    border-radius: 12px;
+    padding: 16px 24px;
     z-index: 10;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 }
 
 .glass-header h1 {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 800;
-    background: linear-gradient(90deg, #bb86fc, #03dac6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #0f172a;
     margin-bottom: 4px;
 }
 
 .glass-header p {
     font-size: 13px;
-    color: #aaa;
+    color: #64748b;
     margin-bottom: 12px;
 }
 
@@ -48,21 +44,22 @@ body {
     align-items: center;
     gap: 8px;
     font-size: 12px;
-    color: #03dac6;
+    color: #10b981;
+    font-weight: 600;
 }
 
 .pulse-indicator .dot {
     width: 8px;
     height: 8px;
-    background-color: #03dac6;
+    background-color: #10b981;
     border-radius: 50%;
     animation: pulse 1.5s infinite;
 }
 
 @keyframes pulse {
-    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(3, 218, 198, 0.7); }
-    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(3, 218, 198, 0); }
-    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(3, 218, 198, 0); }
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+    70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
 #mynetwork {
@@ -72,18 +69,114 @@ body {
     top: 0;
     left: 0;
     z-index: 1;
+    background-color: #f8f9fa;
 }
 
 /* Optional styling for vis.js tooltips */
 .vis-tooltip {
-    background-color: rgba(20, 20, 30, 0.9) !important;
-    backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    color: #fff !important;
-    border-radius: 8px !important;
+    background-color: #ffffff !important;
+    border: none !important;
+    color: #1e293b !important;
+    border-radius: 12px !important;
     font-family: 'Inter', sans-serif !important;
     font-size: 13px !important;
-    padding: 10px 14px !important;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4) !important;
-    white-space: pre-wrap !important;
+    padding: 0 !important; /* Managed by .tooltip-content padding */
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+    z-index: 9999 !important;
+    line-height: 1.5 !important;
+    max-width: 360px !important;
 }
+
+.tooltip-content {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tooltip-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 8px;
+}
+
+.tooltip-header .node-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.tooltip-header .node-type {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 9999px;
+}
+
+.badge-Task { background-color: #fee2e2; color: #ef4444; }
+.badge-Event { background-color: #dbeafe; color: #3b82f6; }
+.badge-Person { background-color: #d1fae5; color: #10b981; }
+.badge-Insight { background-color: #fef3c7; color: #f59e0b; }
+.badge-Circle { background-color: #f3e8ff; color: #af52de; }
+
+.tooltip-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tooltip-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tooltip-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748b;
+}
+
+.tooltip-value {
+    font-size: 12px;
+    color: #1e293b;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.tooltip-list {
+    margin: 4px 0 0 0;
+    padding-left: 16px;
+    list-style-type: disc;
+}
+
+.tooltip-list li {
+    margin-bottom: 2px;
+}
+
+.tooltip-json {
+    margin: 4px 0 0 0;
+    padding: 6px;
+    background-color: #f8fafc;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    overflow-x: auto;
+}
+
+.badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+.badge-success { background-color: #d1fae5; color: #065f46; }
+.badge-danger { background-color: #fee2e2; color: #991b1b; }
