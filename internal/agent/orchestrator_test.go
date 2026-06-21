@@ -176,7 +176,7 @@ func TestSpeakerCoverageBug(t *testing.T) {
 			"add_edges": []any{
 				map[string]any{
 					"target_node_id": "temp_event_gobak_sodor",
-					"rel_type":      "MENTIONED_IN",
+					"rel_type":       "MENTIONED_IN",
 					"evidence_refs": []any{
 						map[string]any{"line_index": 7, "quote": "Ongkeh"},
 					},
@@ -344,7 +344,7 @@ func TestSpeakerCoverageHandleWithSuffix(t *testing.T) {
 			"add_edges": []any{
 				map[string]any{
 					"target_node_id": "temp_event_gobak_sodor",
-					"rel_type":      "MENTIONED_IN",
+					"rel_type":       "MENTIONED_IN",
 					"evidence_refs": []any{
 						map[string]any{"line_index": 12, "quote": "Iya"},
 					},
@@ -381,7 +381,7 @@ func TestSpeakerCoverageNoiseFalseMatch(t *testing.T) {
 			"add_edges": []any{
 				map[string]any{
 					"target_node_id": "temp_event_gobak_sodor",
-					"rel_type":      "MENTIONED_IN",
+					"rel_type":       "MENTIONED_IN",
 					"evidence_refs": []any{
 						map[string]any{"line_index": 12, "quote": "Iya"},
 					},
@@ -418,7 +418,7 @@ func TestSpeakerCoverageShortNameOnly(t *testing.T) {
 			"add_edges": []any{
 				map[string]any{
 					"target_node_id": "temp_event_gobak_sodor",
-					"rel_type":      "MENTIONED_IN",
+					"rel_type":       "MENTIONED_IN",
 					"evidence_refs": []any{
 						map[string]any{"line_index": 12, "quote": "Iya"},
 					},
@@ -430,5 +430,181 @@ func TestSpeakerCoverageShortNameOnly(t *testing.T) {
 	err := runSpeakerCoverageCheck(extractedSpeakers, validToolNodeContent, validToolNodeTypes, batchCreatedContent, batchCreatedNodeTypes, mutRaw)
 	if err != nil {
 		t.Fatalf("Expected speaker coverage check to pass for short name fallback, but got: %v", err)
+	}
+}
+
+// --- buildManifestAccounting tests ---
+//
+// These tests cover the programmatic ledger builder that replaces the
+// LLM-supplied manifest_accounting. The central property under test is that
+// the ledger is derived strictly from the *surviving* mutation set (post edge
+// validation), never from what the model claimed — so a rejected edge must
+// never appear as an accounted-for action, and a SKIP'd line must carry
+// forward whatever skipped_reason the model gave at extraction time.
+
+// 8. TestManifestAccounting_EvidenceRefMatch: a line directly quoted in a
+// surviving edge's evidence_refs should be reported with that edge's rel_type.
+func TestManifestAccounting_EvidenceRefMatch(t *testing.T) {
+	extracted := []ExtractedManifestLine{
+		{Speaker: "nadine_ieee26", Line: "btw @Rendi Ramadana IEEE²⁵ lu 27rb ke gopay gua yaahh", Shape: "directive"},
+	}
+	mutations := []Mutation{
+		{
+			Operation:  "UPDATE_NODE",
+			NodeID:     "person_rendi",
+			Properties: map[string]any{},
+			AddEdges: []EdgeMutation{
+				{
+					RelType:      "MENTIONED_IN",
+					TargetNodeID: "task_bayar_gopay_rendi",
+					EvidenceRefs: []EvidenceRef{
+						{Quote: "lu 27rb ke gopay gua yaahh", LineIndex: 12},
+					},
+				},
+			},
+		},
+	}
+
+	ledger := buildManifestAccounting(extracted, mutations)
+	if len(ledger) != 1 {
+		t.Fatalf("expected 1 ledger entry, got %d", len(ledger))
+	}
+	if ledger[0].ActionTaken != "MENTIONED_IN" {
+		t.Fatalf("expected action_taken MENTIONED_IN, got %q", ledger[0].ActionTaken)
+	}
+}
+
+// 9. TestManifestAccounting_RejectedEdgeIsSkip: this is the direct regression
+// test for the "Ongkeh" bug. An edge whose only evidence_ref failed validation
+// (e.g. the executor's single-token-too-short heuristic) must never survive
+// into the mutations passed to buildManifestAccounting — simulating that here
+// by simply not including the rejected edge — and the corresponding line must
+// be reported as SKIP, not as the edge's rel_type, even though the model
+// originally intended to cite it.
+func TestManifestAccounting_RejectedEdgeIsSkip(t *testing.T) {
+	extracted := []ExtractedManifestLine{
+		{Speaker: "rafid_harsyah", Line: "Ongkeh", Shape: "mention"},
+	}
+	// Simulates post-execution state: the MENTIONED_IN edge citing "Ongkeh" was
+	// rejected by the edge-survival loop in RunAgenticIngestion (single token,
+	// too short) and so never made it into this mutation's AddEdges.
+	mutations := []Mutation{
+		{
+			Operation:  "UPDATE_NODE",
+			NodeID:     "person_rafid",
+			Properties: map[string]any{},
+			AddEdges:   nil, // rejected edge removed
+		},
+	}
+
+	ledger := buildManifestAccounting(extracted, mutations)
+	if len(ledger) != 1 {
+		t.Fatalf("expected 1 ledger entry, got %d", len(ledger))
+	}
+	if ledger[0].ActionTaken != "SKIP" {
+		t.Fatalf("expected rejected-edge line to be reported as SKIP, got %q — a rejected edge must never appear as an accounted-for action", ledger[0].ActionTaken)
+	}
+}
+
+// 10. TestManifestAccounting_SkippedReasonPreserved: a line with no surviving
+// mutation, but for which the model gave a skipped_reason at extraction time,
+// should carry that reason forward into the final ledger.
+func TestManifestAccounting_SkippedReasonPreserved(t *testing.T) {
+	extracted := []ExtractedManifestLine{
+		{
+			Speaker:       "apta_ieee25",
+			Line:          "AI ini",
+			Shape:         "mention",
+			SkippedReason: "Ambiguous reaction/banter, no resolvable referent or entity.",
+		},
+	}
+	mutations := []Mutation{} // nothing references this line
+
+	ledger := buildManifestAccounting(extracted, mutations)
+	if len(ledger) != 1 {
+		t.Fatalf("expected 1 ledger entry, got %d", len(ledger))
+	}
+	if ledger[0].ActionTaken != "SKIP" {
+		t.Fatalf("expected SKIP, got %q", ledger[0].ActionTaken)
+	}
+	if ledger[0].SkippedReason != "Ambiguous reaction/banter, no resolvable referent or entity." {
+		t.Fatalf("expected skipped_reason to be preserved from extraction, got %q", ledger[0].SkippedReason)
+	}
+}
+
+// 11. TestManifestAccounting_FabricatedEventNotLinked: regression test for the
+// "es gobak sodor" bug. A single ambiguous question with no surviving mutation
+// referencing it must be reported as SKIP — confirming the ledger does not
+// independently invent a link to a node just because the line discusses an
+// ambiguous-sounding term.
+func TestManifestAccounting_FabricatedEventNotLinked(t *testing.T) {
+	extracted := []ExtractedManifestLine{
+		{Speaker: "jeslyn_ieee", Line: "es gobak sodor apaan dh", Shape: "question"},
+	}
+	// Correct post-fix behavior: no Event node was created for this line at all,
+	// so no mutation in the surviving set references it.
+	mutations := []Mutation{
+		{
+			Operation: "UPDATE_NODE",
+			NodeID:    "person_jeslyn",
+			AddEdges:  nil,
+		},
+	}
+
+	ledger := buildManifestAccounting(extracted, mutations)
+	if ledger[0].ActionTaken != "SKIP" {
+		t.Fatalf("expected ambiguous question with no real referent to be SKIP, got %q", ledger[0].ActionTaken)
+	}
+}
+
+// 12. TestManifestAccounting_PartialContentParaphraseMatch: a Task's `content`
+// is written as an Indonesian paraphrase, not a verbatim copy, of the line that
+// motivated it. The ledger must still attribute the line to that Task's
+// CREATE_NODE via a meaningful (>=2 token) contiguous overlap, not require an
+// exact substring match.
+func TestManifestAccounting_PartialContentParaphraseMatch(t *testing.T) {
+	extracted := []ExtractedManifestLine{
+		{Speaker: "nadine_ieee26", Line: "guyssss ini yg belom bayar siapaa?? baru aqila, rapid, dan rapip", Shape: "question"},
+	}
+	mutations := []Mutation{
+		{
+			Operation: "CREATE_NODE",
+			NodeType:  "Task",
+			NodeID:    "temp_task_belum_bayar",
+			Properties: map[string]any{
+				"content": "Beberapa anggota belum bayar: Aqila, Rapid, Rapip disebut belum melunasi.",
+			},
+		},
+	}
+
+	ledger := buildManifestAccounting(extracted, mutations)
+	if ledger[0].ActionTaken != "CREATE_NODE" {
+		t.Fatalf("expected paraphrased Task content to tier-2 match as CREATE_NODE, got %q", ledger[0].ActionTaken)
+	}
+}
+
+// 13. TestManifestAccounting_NoFalseSingleTokenMatch: a line sharing only one
+// generic token with an unrelated node's content must NOT be matched — guards
+// against reintroducing the single-token false-positive class this pipeline
+// has already had to fix elsewhere (filterNoiseTokens, TestSingleTokenCollision).
+func TestManifestAccounting_NoFalseSingleTokenMatch(t *testing.T) {
+	extracted := []ExtractedManifestLine{
+		{Speaker: "m_naufal_ieee__", Line: "pikm", Shape: "mention"},
+	}
+	mutations := []Mutation{
+		{
+			Operation: "CREATE_NODE",
+			NodeType:  "Task",
+			NodeID:    "temp_task_unrelated",
+			Properties: map[string]any{
+				// Shares no real tokens with "pikm" — sanity check only.
+				"content": "Beberapa anggota belum bayar iuran kegiatan.",
+			},
+		},
+	}
+
+	ledger := buildManifestAccounting(extracted, mutations)
+	if ledger[0].ActionTaken != "SKIP" {
+		t.Fatalf("expected unrelated short token to remain SKIP, got %q", ledger[0].ActionTaken)
 	}
 }

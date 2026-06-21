@@ -159,8 +159,8 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 			}
 
 			if err != nil {
-				if strings.Contains(err.Error(), "429") {
-					log.Printf("Model %s hit rate limit (429). Placed on 1 minute cooldown. Trying next...", modelRef)
+				if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "502") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "504") {
+					log.Printf("Model %s hit rate limit or server error. Placed on 1 minute cooldown. Trying next...", modelRef)
 					c.Cooldowns[modelRef] = time.Now().Add(1 * time.Minute)
 					lastErr = err.Error()
 					continue
