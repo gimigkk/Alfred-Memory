@@ -136,7 +136,7 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 	var lastCommitArgs string
 	var lastCommitErr string
 
-	for step := 0; step < 15; step++ {
+	for step := 0; step < 30; step++ {
 		var content string
 		var success bool
 		var lastErr string
