@@ -64,11 +64,19 @@ When creating or updating nodes, you must only use properties and edges defined 
 
 - **Insight**: `content`, `category` (personality|relationship_dynamic|preference|pattern), `confidence` (high|medium|low), `aliases`, `needs_clarification`, `clarification_basis`
 
+**Content Field (The Source of Truth & Zero Data Loss):** 
+The `content` field is the primary searchable text for the node. It MUST be highly descriptive, verbose, and contain ALL known facts (Who, What, When, Where, Why, How Much) in narrative form. **ZERO DATA LOSS:** You must ensure that every specific detail (names, amounts, exact times, contextual clues) mentioned in the transcript is captured in the content field. Do NOT just write a short title.
+- **Bad:** "Rapat Zoom S1 Ilmu Komputer"
+- **Good:** "Undangan rapat Zoom dari S1 Ilmu Komputer pada pukul 19.30. Topik dan peserta spesifik belum diketahui, namun undangan telah dikirimkan."
+
 **Default to Uncertainty (needs_clarification):** The default state for ALL new Tasks, Events, and Insights is `needs_clarification: true`. You are strictly FORBIDDEN from setting `needs_clarification: false` unless the transcript provides VERBOSE, explicit context answering all core questions. 
 
-**The Clarity Checklist (clarification_basis):** This field is REQUIRED for all Tasks and Events.
-- If `needs_clarification: true`, use this field to explain exactly what is missing based SOLELY on what the transcript says about this specific entity (e.g., "Who pays?", "When is it?"). Ignore the content or confidence of any other node to prevent certainty bleed.
-- If `needs_clarification: false`, you are FORBIDDEN from leaving this field empty or writing a simple sentence. You MUST use this field to write a strict 5-point checklist proving why it is false, formatted exactly like this: "Who: [X], What: [Y], When: [Z], Why: [A], Destination: [B]". If any of these 5 points are missing or unspecified, you MUST write the exact word "UNKNOWN" in its slot (e.g., "Destination: UNKNOWN"). If you cannot fill all 5 points based strictly on the transcript, `needs_clarification` MUST be `true`.
+**The Clarity Checklist (clarification_basis):** This field is ONLY for listing missing questions. It is NOT a substitute for `content`. All facts MUST be written in narrative form inside `content`.
+- **Be ruthless and highly critical** when evaluating clarity in your thoughts: Do not accept shallow, low-context information.
+  - For **What**: "Zoom meeting", "Rapat", or "Pembayaran" is NOT enough. What is the *topic* of the meeting? What is the *purpose* of the payment?
+  - For **Who**: A broad organization (e.g., "S1 Ilmu Komputer") or an implicit group is NOT enough. Who *specifically* is required to attend or act?
+- If `needs_clarification: true`, use this field ONLY to ask the specific questions about what details are missing based SOLELY on the transcript (e.g., "What is the topic of the Zoom meeting?", "Who exactly is attending?"). Ignore the content or confidence of any other node to prevent certainty bleed.
+- If `needs_clarification: false`, this field MUST BE EMPTY (e.g., `""`). Do not write facts or checklists here. Do your 5-point clarity checklist internally during your `[AGENT THOUGHT]` process to prove to yourself that no information is missing, but keep the final JSON field empty.
 
 **Evidence Refs:** Every edge MUST include `evidence_refs`. You must quote the exact transcript line or vault data that proves the relationship. If you cannot quote direct evidence, do not add the edge. If your strongest evidence for a commitment is a short reply (e.g. 'Ada', 'Oke', 'Siap'), you MUST include a second `evidence_ref` quoting the question or directive it responds to, so the short reply has context.
 
@@ -83,7 +91,7 @@ Thought Process:
 `[AGENT THOUGHT] User A dropped a bank account. This is a payment destination, which represents a distinct task ("Pay User A"). However, no one is directed to pay it yet. The Who, How Much, and Why are missing, so this must be needs_clarification: true.`
 `ROLE CHECK: person_user_a -> temp_task_1 — quote: "1234567890 - BCA a.n User A" — Burden of Execution? N. (Fallback to MENTIONED_IN)`
 JSON Output:
-- `temp_task_1` created with `content: "Pembayaran ke rekening BCA User A (1234567890)"`, `needs_clarification: true`, `clarification_basis: "Who is supposed to pay User A? How much are they supposed to pay? Why are they paying?"`.
+- `temp_task_1` created with `content: "Informasi rekening BCA a.n User A (1234567890) diberikan, namun belum diketahui siapa yang harus membayar, berapa jumlahnya, dan untuk tujuan apa."`, `needs_clarification: true`, `clarification_basis: "Who is supposed to pay User A? How much are they supposed to pay? Why are they paying?"`.
 - `person_user_a` updated with `MENTIONED_IN` -> `temp_task_1`.
 
 **Example 2: Explicit Clear Action with Beneficiary**
@@ -91,12 +99,12 @@ Transcript:
 `[User A]: guys jgn lupa 50rb buat iuran kas ke gopay gw ya`
 `[User B]: Besok jam 10 pagi, gw bakal bayar ke elo ya.`
 Thought Process:
-`[AGENT THOUGHT] User B explicitly commits to paying User A 50rb tomorrow for 'iuran kas'. This is a group activity, so I will create an Event. All context is present for the task.`
+`[AGENT THOUGHT] User B explicitly commits to paying User A 50rb tomorrow for 'iuran kas'. This is a group activity, so I will create an Event. All context is present for the task. I will evaluate clarity: Who: User B, What: Pay iuran kas, When: Besok jam 10 pagi, Why: Iuran kas, Destination: gopay User A. Everything is present, so clarification_basis will be empty.`
 `ROLE CHECK: person_user_b -> temp_task_1 — quote: "gw bakal bayar ke elo ya." — Burden of Execution? Y. (ASSIGNED_TO)`
 `ROLE CHECK: person_user_a -> temp_task_1 — quote: "gopay gw ya" — Burden of Execution? N. Beneficiary. (MENTIONED_IN)`
 JSON Output:
-- `temp_event_1` created with `content: "Pengumpulan iuran kas"`, `needs_clarification: false`, `clarification_basis: "Who: Group, What: Iuran kas, When: Besok, Why: Group fund, Destination: User A"`.
-- `temp_task_1` created with `content: "Bayar 50rb untuk iuran kas ke gopay User A"`, `needs_clarification: false`, `clarification_basis: "Who: User B, What: Pay iuran kas, When: Besok jam 10 pagi, Why: Iuran kas, Destination: gopay User A"`.
+- `temp_event_1` created with `content: "Pengumpulan iuran kas grup. User A mengingatkan grup untuk membayar 50rb ke Gopay miliknya."`, `needs_clarification: false`, `clarification_basis: ""`.
+- `temp_task_1` created with `content: "User B berkomitmen untuk membayar iuran kas sebesar 50rb ke gopay User A besok jam 10 pagi."`, `needs_clarification: false`, `clarification_basis: ""`.
 - `temp_task_1` updated with `PART_OF` -> `temp_event_1`.
 - `person_user_b` updated with `ASSIGNED_TO` -> `temp_task_1`.
 - `person_user_a` updated with `MENTIONED_IN` -> `temp_task_1`.

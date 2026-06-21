@@ -630,12 +630,29 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 							if !ok {
 								continue // Will fail schema validation anyway
 							}
-							cb, ok := props["clarification_basis"].(string)
-							if !ok || strings.TrimSpace(cb) == "" {
-								return "", fmt.Errorf("ERROR: %s node MUST have a non-empty clarification_basis explaining your deduction.", sourceType)
+							
+							// Content validation
+							contentStr, hasContent := props["content"].(string)
+							if hasContent && len(strings.TrimSpace(contentStr)) < 40 {
+								return "", fmt.Errorf("ERROR: content on %s is too short ('%s'). It MUST be a highly descriptive, verbose narrative containing ALL known facts (Who, What, When, Where, Why), ensuring ZERO DATA LOSS. Do not just write a short title.", sourceType, contentStr)
 							}
-							if len(strings.TrimSpace(cb)) < 15 {
-								return "", fmt.Errorf("ERROR: clarification_basis on %s is too short ('%s'). You must explain your deduction referencing Who/What/When/Where explicitly.", sourceType, cb)
+
+							// Clarification Basis validation
+							nc, hasNc := props["needs_clarification"].(bool)
+							cb, hasCb := props["clarification_basis"].(string)
+
+							if !hasNc || nc {
+								if !hasCb || strings.TrimSpace(cb) == "" {
+									return "", fmt.Errorf("ERROR: %s node MUST have a non-empty clarification_basis explaining what specific details are missing.", sourceType)
+								}
+								if len(strings.TrimSpace(cb)) < 15 {
+									return "", fmt.Errorf("ERROR: clarification_basis on %s is too short ('%s'). You must ask specific questions about Who/What/When/Where explicitly.", sourceType, cb)
+								}
+							} else {
+								// If needs_clarification is false, cb should be empty
+								if hasCb && strings.TrimSpace(cb) != "" {
+									return "", fmt.Errorf("ERROR: clarification_basis on %s MUST be empty if needs_clarification is false. All facts belong in the content field.", sourceType)
+								}
 							}
 						}
 					}
