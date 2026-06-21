@@ -211,8 +211,9 @@ Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced
 ### Agentic Ingestion Loop
 When a block commits, processing runs in a fully Agentic ReAct loop driven by the Go Orchestrator to maximize accuracy and resolve coreferences. It utilizes three primary tools:
 1. **`extract_transcript_manifest`**: The LLM must call this first to sequentially enumerate every line in the transcript, ensuring no context is skipped.
-2. **`query_rag`**: Used to fetch subgraph context from the vault. The agent continuously fetches context until it resolves the references (e.g., matching User identities, resolving aliases, checking for duplicate events).
-3. **`commit_mutations`**: Outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions, along with `manifest_accounting` detailing how every transcript line was handled.
+2. **`query_rag`**: Used to fetch subgraph context from the vault. The agent continuously fetches context until it resolves the references (e.g., matching User identities, resolving aliases, checking for duplicate events). The mock validator falls back to token-overlap matching to accurately simulate the fuzziness of the real Vector Search (HNSW).
+3. **`commit_mutations`**: Outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions. **This tool is strictly transactional and all-or-nothing**: if validation fails, the entire batch is rejected. This design forces the agent to resolve the error and resubmit the complete, corrected set of mutations, preventing state-tracking bugs caused by incremental delta updates.
+
 
 ### Go Structural Validation Layer
 Before any mutation touches LadybugDB, it is intercepted by a multi-pass Go validation layer within the Orchestrator. 

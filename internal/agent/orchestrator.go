@@ -20,9 +20,9 @@ type EvidenceRef struct {
 }
 
 type EdgeMutation struct {
-	RelType      string         `json:"rel_type"`
-	TargetNodeID string         `json:"target_node_id"`
-	EvidenceRefs []EvidenceRef  `json:"evidence_refs,omitempty"`
+	RelType      string        `json:"rel_type"`
+	TargetNodeID string        `json:"target_node_id"`
+	EvidenceRefs []EvidenceRef `json:"evidence_refs,omitempty"`
 }
 
 type Mutation struct {
@@ -33,9 +33,28 @@ type Mutation struct {
 	AddEdges   []EdgeMutation         `json:"add_edges,omitempty"`
 }
 
+// ManifestItem is the final, post-execution accounting record for a single
+// transcript line. It is constructed programmatically by the orchestrator
+// after mutations have been validated and executed — never supplied by the LLM —
+// so it is guaranteed to reflect what actually survived, not what the model claimed.
 type ManifestItem struct {
-	Line        string `json:"line"`
-	ActionTaken string `json:"action_taken"`
+	Line          string `json:"line"`
+	Speaker       string `json:"speaker,omitempty"`
+	ActionTaken   string `json:"action_taken"`
+	SkippedReason string `json:"skipped_reason,omitempty"`
+}
+
+// ExtractedManifestLine captures one line as reported by the LLM's
+// extract_transcript_manifest call. Shape and SkippedReason are the model's own
+// characterization at extraction time, captured before any mutation exists —
+// this is the only point in the pipeline where the model's stated *reason* for
+// skipping a line (as opposed to the bare fact that it was skipped) is available,
+// so it must be preserved here rather than re-derived later.
+type ExtractedManifestLine struct {
+	Speaker       string `json:"speaker"`
+	Line          string `json:"line"`
+	Shape         string `json:"shape"`
+	SkippedReason string `json:"skipped_reason"`
 }
 
 type LinkingOutput struct {
@@ -93,7 +112,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				Name:        "query_rag",
 				Description: "Search the knowledge vault for relevant nodes using semantic search.",
 				Parameters: map[string]any{
-					"type":       "object",
+					"type": "object",
 					"properties": map[string]any{
 						"queries": map[string]any{
 							"type":        "array",
@@ -109,47 +128,34 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			Type: "function",
 			Function: llm.FunctionDef{
 				Name:        "commit_mutations",
-				Description: "Commit the final graph mutations to the vault once all entities are resolved. YOU MUST CALL extract_transcript_manifest FIRST.",
+				Description: "Commit the final graph mutations to the vault once all entities are resolved. This is all-or-nothing: if it returns an error, the entire batch is rejected. You must resubmit all mutations in your next attempt. YOU MUST CALL extract_transcript_manifest FIRST.",
 				Parameters: map[string]any{
-					"type":       "object",
+					"type": "object",
 					"properties": map[string]any{
-						"manifest_accounting": map[string]any{
+						"mutations": map[string]any{
 							"type": "array",
-							"description": "You MUST provide an accounting for every single line you extracted in the manifest. Did you act on it? Or skip it?",
 							"items": map[string]any{
 								"type": "object",
 								"properties": map[string]any{
-									"line": map[string]any{"type": "string"},
-									"action_taken": map[string]any{"type": "string", "description": "e.g., CREATE_TASK, UPDATE_EDGE, SKIP"},
-									"skipped_reason": map[string]any{"type": "string"},
-								},
-								"required": []string{"line", "action_taken"},
-							},
-						},
-						"mutations": map[string]any{
-							"type":  "array",
-							"items": map[string]any{
-								"type":       "object",
-								"properties": map[string]any{
-									"operation":  map[string]any{"type": "string", "enum": []string{"CREATE_NODE", "UPDATE_NODE"}},
-									"node_type":  map[string]any{"type": "string"},
-									"node_id":    map[string]any{"type": "string"},
+									"operation": map[string]any{"type": "string", "enum": []string{"CREATE_NODE", "UPDATE_NODE"}},
+									"node_type": map[string]any{"type": "string"},
+									"node_id":   map[string]any{"type": "string"},
 									"properties": map[string]any{
 										"type": "object",
 										"properties": map[string]any{
-											"content": map[string]any{"type": "string"},
-											"status": map[string]any{"type": "string"},
+											"content":             map[string]any{"type": "string"},
+											"status":              map[string]any{"type": "string"},
 											"needs_clarification": map[string]any{"type": "boolean"},
 											"clarification_basis": map[string]any{
-												"type": "string",
+												"type":        "string",
 												"description": "REQUIRED for Task/Event/Insight. Explain your deduction based solely on what this transcript says about this entity — ignore the content or confidence of any other node in this same mutation set.",
 											},
 										},
 									},
-									"add_edges":  map[string]any{
-										"type":  "array",
+									"add_edges": map[string]any{
+										"type": "array",
 										"items": map[string]any{
-											"type":       "object",
+											"type": "object",
 											"properties": map[string]any{
 												"rel_type":       map[string]any{"type": "string"},
 												"target_node_id": map[string]any{"type": "string"},
@@ -158,7 +164,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 													"items": map[string]any{
 														"type": "object",
 														"properties": map[string]any{
-															"quote": map[string]any{"type": "string"},
+															"quote":      map[string]any{"type": "string"},
 															"line_index": map[string]any{"type": "integer"},
 														},
 														"required": []string{"quote", "line_index"},
@@ -173,21 +179,20 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 							},
 						},
 					},
-					"required": []string{"manifest_accounting", "mutations"},
+					"required": []string{"mutations"},
 				},
 			},
 		},
 	}
 
 	hasExtractedManifest := false
-	var extractedManifestLines []string
+	var extractedManifestLines []ExtractedManifestLine
 	var lastToolResults string
 	validToolNodeIDs := make(map[string]bool)
 	validToolNodeTypes := make(map[string]string)
 	validToolNodeContent := make(map[string]string)
 	var extractedSpeakers []string
 	var queriedTerms []string
-
 
 	executor := func(name, args string) (string, error) {
 		if name == "query_rag" {
@@ -196,10 +201,10 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				return "", err
 			}
 			queries := parsed["queries"]
-			
+
 			results := make(map[string]any)
 			var allFoundNames []string
-			
+
 			// BATCH EMBEDDING: Fetch all vectors in a single API call! Consumes only 1 RPM.
 			vecs, err := o.Embed.GetVectors(queries)
 			if err != nil {
@@ -216,12 +221,17 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					results[query] = map[string]string{"error": err.Error()}
 					continue
 				}
-				
+
 				// Mock DB returns everything. Filter it here so it behaves like a real search.
 				var filteredNodes []rag.Node
 				normQuery := normalizeStr(query)
+				queryTokens := filterNoiseTokens(tokenize(query))
+				
 				for _, n := range sub.Nodes {
-					if strings.Contains(normalizeStr(n.ID), normQuery) || strings.Contains(normalizeStr(n.Content), normQuery) {
+					// Semantic match heuristic: strict substring OR token overlap (simulating fuzzy vector search)
+					if strings.Contains(normalizeStr(n.ID), normQuery) || 
+					   strings.Contains(normalizeStr(n.Content), normQuery) || 
+					   hasTokenOverlap(queryTokens, tokenize(n.Content)) {
 						filteredNodes = append(filteredNodes, n)
 					}
 				}
@@ -239,7 +249,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					}
 				}
 			}
-			
+
 			log.Printf("\033[33m▶ [AGENT ACTION]\033[0m Called query_rag for %d queries: %v", len(queries), queries)
 			foundAny := false
 			for _, query := range queries {
@@ -257,10 +267,10 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			}
 
 			subBytes, _ := json.Marshal(results)
-			
+
 			// Save tool results for substring verification later
 			lastToolResults += string(subBytes) + " "
-			
+
 			return string(subBytes), nil
 		} else if name == "extract_transcript_manifest" {
 			hasExtractedManifest = true
@@ -269,17 +279,26 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				return "", err
 			}
 			lines := parsed["extracted_lines"]
-			
-			extractedManifestLines = []string{}
+
+			extractedManifestLines = []ExtractedManifestLine{}
 			for _, mLine := range lines {
+				var ml ExtractedManifestLine
 				if lineStr, ok := mLine["line"].(string); ok {
-					extractedManifestLines = append(extractedManifestLines, lineStr)
+					ml.Line = lineStr
 				}
 				if speakerStr, ok := mLine["speaker"].(string); ok {
+					ml.Speaker = speakerStr
 					extractedSpeakers = append(extractedSpeakers, speakerStr)
 				}
+				if shapeStr, ok := mLine["shape"].(string); ok {
+					ml.Shape = shapeStr
+				}
+				if reasonStr, ok := mLine["skipped_reason"].(string); ok {
+					ml.SkippedReason = reasonStr
+				}
+				extractedManifestLines = append(extractedManifestLines, ml)
 			}
-			
+
 			// HEURISTIC VALIDATION: check if the agent dropped obvious candidate lines
 			// We look for "@", "?", "Ada", "Iya", "Oke", "tolong" in the raw transcript.
 			var missing []string
@@ -314,54 +333,18 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			if !hasExtractedManifest {
 				return "", fmt.Errorf("ERROR: You are strictly forbidden from committing mutations until you have successfully called extract_transcript_manifest and passed validation.")
 			}
-			
+
 			var parsed map[string]any
 			if err := json.Unmarshal([]byte(args), &parsed); err != nil {
 				return "", err
 			}
-			
-			// Verify manifest accounting
-			accRaw, ok := parsed["manifest_accounting"].([]any)
-			if !ok {
-				return "", fmt.Errorf("ERROR: Missing or invalid manifest_accounting array. You must provide an accounting for every single line you extracted.")
-			}
-			
-			var accountedLines []string
-			hasCreateTaskInAccounting := false
 
-			for _, acc := range accRaw {
-				if accMap, ok := acc.(map[string]any); ok {
-					if line, ok := accMap["line"].(string); ok {
-						accountedLines = append(accountedLines, line)
-					}
-					if actionTaken, ok := accMap["action_taken"].(string); ok {
-						act := strings.ToUpper(actionTaken)
-						if strings.Contains(act, "CREATE_TASK") || strings.Contains(act, "TASK") {
-							hasCreateTaskInAccounting = true
-						}
-					}
-				}
-			}
-			
-			for _, extLine := range extractedManifestLines {
-				found := false
-				for _, accLine := range accountedLines {
-					if strings.TrimSpace(extLine) == strings.TrimSpace(accLine) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return "", fmt.Errorf("ERROR: Your manifest_accounting is missing line: '%s'. You must account for ALL extracted lines.", extLine)
-				}
-			}
-			
 			// Verify clarification_basis, cross-reference, and target node IDs
 			hasTaskMutation := false
 			batchCreatedIDs := make(map[string]bool)
 			batchCreatedNodeTypes := make(map[string]string)
 			batchCreatedContent := make(map[string]string)
-			
+
 			// Build list of all quotes used anywhere
 			var allQuotes []string
 
@@ -373,7 +356,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 						if op == "CREATE_NODE" {
 							nodeID, _ := mItem["node_id"].(string)
 							nodeType, _ := mItem["node_type"].(string)
-							
+
 							var contentStr string
 							if props, ok := mItem["properties"].(map[string]any); ok {
 								if c, ok := props["content"].(string); ok {
@@ -403,7 +386,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 								batchCreatedContent[impliedID] = contentStr
 							}
 						}
-						
+
 						// Collect quotes from this mutation
 						if edgesRaw, ok := mItem["add_edges"].([]any); ok {
 							for _, eRaw := range edgesRaw {
@@ -423,31 +406,11 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					}
 				}
 
-				// Check manifest accounting
-				if accRaw, ok := parsed["manifest_accounting"].([]any); ok {
-					for _, aRaw := range accRaw {
-						if accMap, ok := aRaw.(map[string]any); ok {
-							act, _ := accMap["action_taken"].(string)
-							line, _ := accMap["line"].(string)
-							if act == "UPDATE_TASK" || act == "UPDATE_EDGE" {
-								foundQuote := false
-								for _, q := range allQuotes {
-									if strings.Contains(line, q) || strings.Contains(q, line) {
-										foundQuote = true
-										break
-									}
-								}
-								if !foundQuote {
-									return "", fmt.Errorf("ERROR: You claimed action_taken '%s' for line '%s', but this line was never used as a quote in any evidence_refs.", act, line)
-								}
-							}
-						}
-					}
-				}
-
 				// Check User Resolution (Rule 16) coverage
 				for _, speaker := range extractedSpeakers {
-					if strings.HasPrefix(speaker, "_62_") { continue }
+					if strings.HasPrefix(speaker, "_62_") {
+						continue
+					}
 					speakerNorm := normalizeStr(speaker)
 					queried := false
 					for _, qt := range queriedTerms {
@@ -463,9 +426,11 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 
 				// Check participant coverage
 				for _, speaker := range extractedSpeakers {
-					if strings.HasPrefix(speaker, "_62_") { continue }
+					if strings.HasPrefix(speaker, "_62_") {
+						continue
+					}
 					speakerRepresented := false
-					
+
 					// Check if this speaker matches any person node in mutations
 					for _, m := range mutRaw {
 						if mItem, ok := m.(map[string]any); ok {
@@ -477,17 +442,25 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 									ntype = batchCreatedNodeTypes[nodeID]
 								}
 							}
-							
+
 							checkID := func(id string, typ string) bool {
-								if typ != "Person" { return false }
+								if typ != "Person" {
+									return false
+								}
 								speakerTokens := filterNoiseTokens(tokenize(speaker))
 								if len(speakerTokens) == 0 {
 									return false // nothing meaningful left to match on
 								}
-								if hasTokenOverlap(speakerTokens, tokenize(id)) { return true }
+								if hasTokenOverlap(speakerTokens, tokenize(id)) {
+									return true
+								}
 								contentStr := validToolNodeContent[id]
-								if contentStr == "" { contentStr = batchCreatedContent[id] }
-								if hasTokenOverlap(speakerTokens, tokenize(contentStr)) { return true }
+								if contentStr == "" {
+									contentStr = batchCreatedContent[id]
+								}
+								if hasTokenOverlap(speakerTokens, tokenize(contentStr)) {
+									return true
+								}
 								return false
 							}
 
@@ -495,13 +468,15 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 								speakerRepresented = true
 								break
 							}
-							
+
 							if edgesRaw, ok := mItem["add_edges"].([]any); ok {
 								for _, eRaw := range edgesRaw {
 									if edgeMap, ok := eRaw.(map[string]any); ok {
 										targetID, _ := edgeMap["target_node_id"].(string)
 										ttype := validToolNodeTypes[targetID]
-										if ttype == "" { ttype = batchCreatedNodeTypes[targetID] }
+										if ttype == "" {
+											ttype = batchCreatedNodeTypes[targetID]
+										}
 										if checkID(targetID, ttype) {
 											speakerRepresented = true
 											break
@@ -509,10 +484,12 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 									}
 								}
 							}
-							if speakerRepresented { break }
+							if speakerRepresented {
+								break
+							}
 						}
 					}
-					
+
 					if !speakerRepresented {
 						return "", fmt.Errorf("ERROR: You extracted lines from speaker '%s' but never represented them in any mutation. If they do not own a task, they MUST receive a MENTIONED_IN edge per Rule 2.", speaker)
 					}
@@ -523,7 +500,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					if mItem, ok := m.(map[string]any); ok {
 						op, _ := mItem["operation"].(string)
 						nodeID, _ := mItem["node_id"].(string)
-						
+
 						sourceType, _ := mItem["node_type"].(string)
 						if sourceType == "" {
 							sourceType = validToolNodeTypes[nodeID]
@@ -554,7 +531,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 										continue // skip short names/aliases
 									}
 									itemTokens := tokenize(item)
-									
+
 									// Use order-independent isTokenSubset matching
 									if isTokenSubset(itemTokens, tokenize(compareID)) || isTokenSubset(itemTokens, tokenize(compareContent)) {
 										return fmt.Errorf("ERROR: You are attempting to CREATE_NODE for Person '%s' (alias/name '%s') which already exists in the vault/batch as '%s'. You must use UPDATE_NODE instead per Rule 4.", nodeID, item, compareID)
@@ -605,7 +582,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 								if edgeMap, ok := eRaw.(map[string]any); ok {
 									targetID, _ := edgeMap["target_node_id"].(string)
 									relType, _ := edgeMap["rel_type"].(string)
-									
+
 									var targetType string
 
 									if targetID != "" {
@@ -647,7 +624,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 								}
 							}
 						}
-						
+
 						if sourceType == "Task" || sourceType == "Event" || sourceType == "Insight" {
 							props, ok := mItem["properties"].(map[string]any)
 							if !ok {
@@ -665,8 +642,8 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				}
 			}
 
-			if hasCreateTaskInAccounting && !hasTaskMutation {
-				return "", fmt.Errorf("ERROR: You claimed to CREATE_TASK or act on a Task in manifest_accounting, but no Task mutation exists in the final mutations array.")
+			if hasTaskMutation {
+				log.Printf("\033[90m   (commit includes at least one Task mutation)\033[0m")
 			}
 
 			return "OK", nil
@@ -709,9 +686,9 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 		log.Printf("%s🔨 Mutation: [%s] %s (ID: %s)\033[0m", color, m.Operation, m.NodeType, m.NodeID)
 
 		if m.Operation == "CREATE_NODE" || (m.Operation == "UPDATE_NODE" && m.NodeType != "" && content != "") {
-		if !dryRun {
+			if !dryRun {
 				ladybug.AddMockNode(m.NodeID, m.NodeType, content)
-		}
+			}
 		}
 
 		if content != "" {
@@ -732,7 +709,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 
 			for _, ref := range e.EvidenceRefs {
 				quote := strings.TrimSpace(ref.Quote)
-				
+
 				// Length and token heuristic check
 				if len(e.EvidenceRefs) < 2 {
 					if len(quote) < 5 {
@@ -752,11 +729,11 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 						passed = true
 					}
 				}
-				
+
 				if !passed && strings.Contains(lastToolResults, ref.Quote) {
 					passed = true
 				}
-				
+
 				if passed {
 					validCount++
 				} else {
@@ -768,7 +745,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				log.Printf("   \033[31m└─ [REJECTED EDGE]\033[0m %s -> %s (Failed all %d refs: %s)", e.RelType, e.TargetNodeID, len(e.EvidenceRefs), strings.Join(failedQuotes, ", "))
 				continue
 			}
-			
+
 			survivingEdges = append(survivingEdges, e)
 
 			if len(failedQuotes) > 0 {
@@ -776,15 +753,22 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			} else {
 				log.Printf("   └─ Add Edge: \033[33m%s\033[0m -> \033[32m%s\033[0m (Verified %d/%d refs)", e.RelType, e.TargetNodeID, validCount, len(e.EvidenceRefs))
 			}
-				if !dryRun {
-					ladybug.AddMockEdge(m.NodeID, e.TargetNodeID, e.RelType)
-				}
+			if !dryRun {
+				ladybug.AddMockEdge(m.NodeID, e.TargetNodeID, e.RelType)
+			}
 		}
-		
+
 		linkOut.Mutations[i].AddEdges = survivingEdges
-		
+
 		log.Println() // Add blank line between mutations
 	}
+
+	// Build the manifest accounting ledger programmatically, from the mutations
+	// that actually survived validation and edge-quote verification above. This
+	// guarantees 100% consistency between the ledger and what was truly applied —
+	// the LLM no longer asserts this; see buildManifestAccounting for the matching logic.
+	linkOut.ManifestAccounting = buildManifestAccounting(extractedManifestLines, linkOut.Mutations)
+	log.Printf("\033[32m✔ Manifest accounting built for %d lines.\033[0m", len(linkOut.ManifestAccounting))
 
 	return &linkOut, nil
 }
@@ -861,6 +845,33 @@ func hasTokenOverlap(sub, main []string) bool {
 	return false
 }
 
+// longestCommonRun returns the length of the longest contiguous run of tokens
+// shared between a and b, preserving order (classic longest-common-substring,
+// applied to token sequences rather than characters). Used where a single shared
+// token would be too weak a signal but exact whole-sequence containment (isSubslice)
+// would be too strict — e.g. matching a transcript line against a paraphrased
+// node content where only a meaningful phrase, not the whole line, recurs verbatim.
+func longestCommonRun(a, b []string) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	prev := make([]int, len(b)+1)
+	best := 0
+	for i := 1; i <= len(a); i++ {
+		curr := make([]int, len(b)+1)
+		for j := 1; j <= len(b); j++ {
+			if a[i-1] == b[j-1] {
+				curr[j] = prev[j-1] + 1
+				if curr[j] > best {
+					best = curr[j]
+				}
+			}
+		}
+		prev = curr
+	}
+	return best
+}
+
 func filterNoiseTokens(tokens []string) []string {
 	var filtered []string
 	numericRe := regexp.MustCompile(`^[0-9]+$`)
@@ -881,4 +892,149 @@ func filterNoiseTokens(tokens []string) []string {
 		return tokens // filtering would remove everything — fall back to unfiltered
 	}
 	return filtered
+}
+
+// buildManifestAccounting constructs the final manifest ledger programmatically,
+// from the mutations that actually survived validation and edge-quote verification
+// (i.e. the post-execution state of `mutations`, where rejected edges have already
+// been filtered out of each mutation's AddEdges). It never trusts an LLM-supplied
+// claim about what happened to a line — every action_taken here is derived by
+// re-scanning the surviving mutation set for evidence that actually cites the line.
+//
+// Matching priority per line (first match wins):
+//  1. The line is (sub)matched by a quote in a surviving edge's evidence_refs.
+//     This is the strongest signal: evidence_refs are already verified, in the
+//     execution loop, to be real substrings of a real transcript line. The
+//     action_taken is set to that edge's rel_type, scoped to the specific
+//     source/target node pair, since the same line may support multiple edges.
+//  2. The line is not cited by any edge, but its content tokens form a contiguous
+//     subsequence inside a surviving node's own content/name/aliases (i.e. the
+//     line plausibly seeded that node's properties directly, e.g. a Task whose
+//     `content` restates the line). Token-subsequence matching (not single-token
+//     overlap) is used deliberately — single shared tokens are exactly the false
+//     positive class this pipeline has previously had to guard against, and a
+//     manifest ledger that reuses that weak match would misattribute a SKIP'd
+//     line to an unrelated CREATE_NODE.
+//  3. Neither — the line was not used by any surviving mutation. Reported as
+//     SKIP. If the model gave a skipped_reason at extraction time (before any
+//     mutation existed, so before it had any incentive to rationalize a
+//     post-hoc decision), that reason is preserved; otherwise left blank.
+func buildManifestAccounting(extractedLines []ExtractedManifestLine, mutations []Mutation) []ManifestItem {
+	type quoteHit struct {
+		relType  string
+		nodeID   string
+		targetID string
+	}
+
+	// Index every surviving edge's evidence quotes for tier-1 matching.
+	var edgeHits []quoteHit
+	edgeQuoteText := make(map[int]string) // index into edgeHits -> quote text used (for substring test)
+	hitIdx := 0
+	for _, m := range mutations {
+		for _, e := range m.AddEdges {
+			for _, ref := range e.EvidenceRefs {
+				q := strings.TrimSpace(ref.Quote)
+				if q == "" {
+					continue
+				}
+				edgeHits = append(edgeHits, quoteHit{
+					relType:  e.RelType,
+					nodeID:   m.NodeID,
+					targetID: e.TargetNodeID,
+				})
+				edgeQuoteText[hitIdx] = q
+				hitIdx++
+			}
+		}
+	}
+
+	// Index every surviving node's content/name/aliases for tier-2 matching.
+	type nodeContentEntry struct {
+		nodeID    string
+		operation string
+		tokens    []string
+	}
+	var nodeEntries []nodeContentEntry
+	for _, m := range mutations {
+		var contentStr string
+		if c, ok := m.Properties["content"].(string); ok {
+			contentStr += " " + c
+		}
+		if n, ok := m.Properties["name"].(string); ok {
+			contentStr += " " + n
+		}
+		if aliases, ok := m.Properties["aliases"].([]any); ok {
+			for _, a := range aliases {
+				contentStr += " " + fmt.Sprint(a)
+			}
+		}
+		if strings.TrimSpace(contentStr) == "" {
+			continue
+		}
+		nodeEntries = append(nodeEntries, nodeContentEntry{
+			nodeID:    m.NodeID,
+			operation: m.Operation,
+			tokens:    tokenize(contentStr),
+		})
+	}
+
+	ledger := make([]ManifestItem, 0, len(extractedLines))
+
+	for _, ml := range extractedLines {
+		line := strings.TrimSpace(ml.Line)
+		item := ManifestItem{
+			Line:    ml.Line,
+			Speaker: ml.Speaker,
+		}
+
+		if line == "" {
+			item.ActionTaken = "SKIP"
+			item.SkippedReason = ml.SkippedReason
+			ledger = append(ledger, item)
+			continue
+		}
+
+		// Tier 1: matched by a surviving edge's evidence_ref.
+		matched := false
+		for i, hit := range edgeHits {
+			q := edgeQuoteText[i]
+			if q == "" {
+				continue
+			}
+			if strings.Contains(line, q) || strings.Contains(q, line) {
+				item.ActionTaken = hit.relType
+				matched = true
+				break
+			}
+		}
+
+		// Tier 2: matched by a surviving node's own content (CREATE_NODE/UPDATE_NODE
+		// whose properties plausibly draw on this line). Node `content` is written
+		// as an Indonesian narrative paraphrase per the prompt's storage rules, not
+		// a verbatim copy of the line, so we cannot require the whole line as a
+		// contiguous subsequence inside the node content (that would almost never
+		// fire). Instead we require the longest common contiguous token run between
+		// the two to be at least 2 tokens — long enough to rule out a single shared
+		// word (the false-positive class this pipeline already guards against
+		// elsewhere), short enough to still catch genuine paraphrase overlap.
+		if !matched {
+			lineTokens := tokenize(line)
+			for _, ne := range nodeEntries {
+				if longestCommonRun(lineTokens, ne.tokens) >= 2 {
+					item.ActionTaken = ne.operation
+					matched = true
+					break
+				}
+			}
+		}
+
+		if !matched {
+			item.ActionTaken = "SKIP"
+			item.SkippedReason = ml.SkippedReason
+		}
+
+		ledger = append(ledger, item)
+	}
+
+	return ledger
 }

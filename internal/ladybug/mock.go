@@ -30,9 +30,9 @@ var mockNodes = [][]any{
 	{"person_apta", "Person", "Name: Apta, Aliases: Apta, apta_ieee25"},
 	{"person_gilang", "Person", "Name: Gilang Muhamad W, Aliases: Gilang, Lang, Gilang Muhamad, m3_117_gilang_muhamad_w, M3-117_Gilang Muhamad W, You, THE USER"},
 	{"person_jeslyn", "Person", "Name: Jeslyn, Aliases: Jes, Jeslyn, jeslyn_ieee"},
-	{"person_naufal", "Person", "Name: Naufal, Aliases: Naufal, Opal"},
+	{"person_naufal", "Person", "Name: Naufal, Aliases: Naufal, Opal, m_naufal_ieee__"},
 	{"person_rendi", "Person", "Name: Rendi Ramadana, Aliases: Ren, Rendi"},
-	{"person_nadine", "Person", "Name: Nadine, Aliases: Din, Nadine"},
+	{"person_nadine", "Person", "Name: Nadine, Aliases: Din, Nadine, nadine_ieee26"},
 	{"person_clint", "Person", "Name: Clint, Aliases: Clint"},
 	{"event_dpp", "Event", "Event presentasi design DPP hari Jumat"},
 }
