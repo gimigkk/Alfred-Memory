@@ -208,23 +208,28 @@ Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced
 
 ## 6. LLM Extraction Pipeline
 
+### Dynamic ReAct Architecture & Prompt Decoupling
+To prevent context window degradation and recency bias, the pipeline uses a **Dynamic ReAct Architecture**. The monolithic prompt is decoupled into distinct skills (`skill_discovery.md`, `skill_commit.md`).
+- **Discovery Phase:** The agent starts with only the discovery instructions. It must use `extract_transcript_manifest` to sequentially enumerate every line, and `query_rag` to fetch required context from the vault.
+- **Stateful Middleware Interceptor:** Once the agent resolves entities, it outputs the `[REQUEST_SCHEMA]` token. The Go Orchestrator intercepts this, prunes all intermediate "thought" clutter from the conversation array, and dynamically injects the rigid graph schema (`skill_commit.md`) at the peak of the LLM's context window.
+
 ### Agentic Ingestion Loop
-When a block commits, processing runs in a fully Agentic ReAct loop driven by the Go Orchestrator to maximize accuracy and resolve coreferences. It utilizes three primary tools:
-1. **`extract_transcript_manifest`**: The LLM must call this first to sequentially enumerate every line in the transcript, ensuring no context is skipped.
-2. **`query_rag`**: Used to fetch subgraph context from the vault. The agent continuously fetches context until it resolves the references (e.g., matching User identities, resolving aliases, checking for duplicate events). The mock validator falls back to token-overlap matching to accurately simulate the fuzziness of the real Vector Search (HNSW).
-3. **`commit_mutations`**: Outputs a final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions. **This tool is strictly transactional and all-or-nothing**: if validation fails, the entire batch is rejected. This design forces the agent to resolve the error and resubmit the complete, corrected set of mutations, preventing state-tracking bugs caused by incremental delta updates.
+The loop is driven by the Go Orchestrator and utilizes three primary tools:
+1. **`extract_transcript_manifest`**: The LLM must call this first. If lines are skipped, the orchestrator hard-rejects the extraction.
+2. **`query_rag`**: Fetches subgraph context from the vault to resolve aliases and check for duplicate events. The interceptor blocks any schema requests until the vault is queried.
+3. **`commit_mutations`**: Outputs the final JSON manifest of `CREATE_NODE` and `UPDATE_NODE` instructions. **Strictly transactional**: if validation fails, the entire batch is rejected.
 
 ### Schema-Based Graph Construction & Clarity Constraints
-To prevent LLM "tunnel vision" (overfitting to few-shot examples) and graph hallucination, the ingestion agent operates under strict structural constraints:
-- **Schema-Defined Topology:** Graph topologies (allowed incoming and outgoing edges) are explicitly defined within the schema constraints of the prompt, rather than relying on textual rules or brittle examples. The LLM mathematically maps outgoing edges (e.g., `PART_OF` for Tasks, `ASSIGNED_TO`/`MENTIONED_IN` for Persons) directly into the mutation payloads.
-- **The Clarity Checklist:** The "Default to Uncertainty" rule requires all new entities to start with `needs_clarification: true`. To toggle this to `false`, the LLM is forced to output a strict 5-point checklist (Who, What, When, Why, Destination) directly inside the `clarification_basis` JSON property. This moves the burden of proof from a "soft" prompt instruction into a hard structural payload requirement.
-
+To prevent LLM "tunnel vision" and graph hallucination, the ingestion agent operates under strict structural constraints:
+- **Schema-Defined Topology:** Graph topologies are explicitly defined within the schema constraints of the prompt. The LLM mathematically maps outgoing edges (e.g., `PART_OF` for Tasks, `ASSIGNED_TO`/`MENTIONED_IN` for Persons) directly into the mutation payloads.
+- **The Clarity Checklist:** The "Default to Uncertainty" rule requires all new entities to start with `needs_clarification: true`. To toggle this to `false`, the LLM is forced to output a strict 5-point checklist (Who, What, When, Where, Why) directly inside the `clarification_basis` JSON property. There are **no "operationally necessary" exceptions**—if any of the 5Ws are implied, the clarification flag must trigger.
 
 ### Go Structural Validation Layer
 Before any mutation touches LadybugDB, it is intercepted by a multi-pass Go validation layer within the Orchestrator. 
-- **Directional Enforcement:** Edges must strictly originate from `Person` or `Task` and point outward (e.g., `ASSIGNED_TO` goes Person -> Task). Inverse structures are hard-rejected.
-- **Null Hypothesis (Events):** Forces the agent to prove an event match rather than hallucinate links.
-- **User Resolution:** Ensures "The User" is natively resolved via `query_rag` rather than skipped as a magical entity placeholder.
+- **Directional Enforcement:** Edges must strictly originate from `Person` or `Task` and point outward. Inverse structures are hard-rejected.
+- **Null Hypothesis (Events):** Forces the agent to prove an event match via at least **two explicit, unique keywords** rather than hallucinating semantic links.
+- **User Resolution:** Ensures "The User" is natively resolved via `query_rag`.
+- **Clarity Guard Override:** If the `clarification_basis` mentions that a field is "unknown", the Go orchestrator forcibly overrides `needs_clarification` to true, regardless of what the LLM claimed.
 Any mutation failing structural invariants logs a `[REJECTED EDGE]` and is stripped out, protecting the graph topology from hallucination.
 
 ### Deterministic Evaluation Harness
@@ -397,7 +402,7 @@ CREATE REL TABLE CONTRADICTS (
 );
 
 -- Person→Person relationship. Structural descriptor, not behavioral (behavioral lives in Insights).
--- Descriptor uses canonical vocabulary from skill.md but is not a hard enum.
+-- Descriptor uses canonical vocabulary from core_schema.md but is not a hard enum.
 CREATE REL TABLE KNOWS (
     FROM Person TO Person,
     descriptor STRING,              -- "teman dekat" | "rekan" | "senior" | "junior" | "kenalan"
@@ -658,7 +663,7 @@ Delivered via the PWA Push API + Service Workers. Service Workers run in the bac
 - Error correction flow (PWA-driven)
 - Off-site backup strategy
 - Multi-source ingestion (Telegram, Email)
-- User-taught extraction rules (self-updating skill.md)
+- User-taught extraction rules (self-updating prompts)
 
 ---
 
@@ -684,8 +689,8 @@ LadybugDB and SQLite are both single files on the VPS. If the VPS dies, all memo
 **Q2: Multi-Source Architecture**
 How do future ingestion sources (Telegram, Email) plug in without rewriting the ingestion layer? Likely a source-agnostic message interface that WAHA and future adapters all conform to. Not a near-future priority.
 
-**Q3: User-Taught Extraction Rules (Self-Updating skill.md)**
-The user could indirectly prompt-engineer Alfred's extraction criteria by telling it what to save or ignore. Alfred would then rewrite its own extraction skill.md to reflect those preferences (e.g. "stop saving random event announcements unless I'm directly involved"). Scope-creep risk for now - noted as a future personalisation feature post-validation.
+**Q3: User-Taught Extraction Rules (Self-Updating Prompts)**
+The user could indirectly prompt-engineer Alfred's extraction criteria by telling it what to save or ignore. Alfred would then rewrite its own extraction prompts to reflect those preferences (e.g. "stop saving random event announcements unless I'm directly involved"). Scope-creep risk for now - noted as a future personalisation feature post-validation.
 
 ---
 
@@ -751,3 +756,6 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 61 | **No Example Bleed in Prompts** | Specific placeholder data in prompt examples causes LLM hallucination and overfitting ("Example Bleed"). Prompt examples must use highly abstract placeholders like `[ABSTRACT_REASON]` to force reliance on raw transcript text. | Jun 21, 2026 |
 | 62 | **Semantic Readable Node IDs** | Instead of generating purely random UUIDs (`node_1a2b3c...`) for new nodes, the orchestrator strips the LLM's `temp_` prefix and appends a 6-character hash to the semantic intent (e.g., `event_pembayaran_1a2b3c`). This guarantees DB uniqueness while keeping graph visualizer tooltips human-readable. | Jun 21, 2026 |
 | 63 | **ConversationBlock replaced by node-level verbatim** | Dropped ConversationBlock to avoid graph pollution. Provenance is now maintained directly on nodes via 'verbatim' and edges via 'evidence_refs'. | Jun 21, 2026 |
+| 64 | **Dynamic ReAct via Stateful Interceptor** | The monolithic ingestion prompt was split into decoupled skills (`discovery`, `commit`). A Go-side interceptor prunes the conversation array mid-flight and injects rigid schema constraints only upon a `[REQUEST_SCHEMA]` token, maximizing context window efficiency and recency bias. | Jun 22, 2026 |
+| 65 | **Mandatory Hostile Persona in Simulation** | The Courtroom simulation now explicitly mandates a "Hostile Attacker (Prosecutor)" persona to aggressively stress-test structural vulnerabilities, prompt injection loopholes, and edge cases, preventing echo-chamber approvals for architectural changes. | Jun 22, 2026 |
+| 66 | **Strict 5W Clarity Defaults** | Removed the "operationally necessary" loophole from the Clarity Guard. Any Task or Event missing explicit Who/What/When/Where/Why must be flagged `needs_clarification: true`. Null hypothesis for Event linking requires two unique matching keywords, preventing RAG-induced semantic hallucination. | Jun 22, 2026 |
