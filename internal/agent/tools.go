@@ -53,6 +53,23 @@ func init() {
 		{
 			Type: "function",
 			Function: llm.FunctionDef{
+				Name:        "declare_new_speaker",
+				Description: "Declare that a speaker from the manifest is a new entity that does not exist in the vault. You MUST attempt to search for them via query_rag first.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"target_speaker": map[string]any{
+							"type":        "string",
+							"description": "The EXACT speaker label from the manifest.",
+						},
+					},
+					"required": []string{"target_speaker"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
 				Name:        "commit_mutations",
 				Description: "Commit the final graph mutations to the vault once all entities are resolved. This is all-or-nothing: if it returns an error, the entire batch is rejected. You must resubmit all mutations in your next attempt. YOU MUST CALL extract_transcript_manifest FIRST.",
 				Parameters: map[string]any{
@@ -69,6 +86,10 @@ func init() {
 									"properties": map[string]any{
 										"type": "object",
 										"properties": map[string]any{
+											"rag_verification_query": map[string]any{
+												"type":        "string",
+												"description": "REQUIRED for CREATE_NODE on Person, Event, Project, or Circle. The exact string you queried via query_rag to verify this entity didn't exist.",
+											},
 											"content":             map[string]any{"type": "string"},
 											"status":              map[string]any{"type": "string"},
 											"verbatim":            map[string]any{"type": "string"},

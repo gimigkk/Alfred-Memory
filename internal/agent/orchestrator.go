@@ -43,6 +43,8 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			return o.handleQueryRag(args, state)
 		} else if name == "extract_transcript_manifest" {
 			return o.handleExtractManifest(args, transcript, state)
+		} else if name == "declare_new_speaker" {
+			return o.handleDeclareNewSpeaker(args, state)
 		} else if name == "commit_mutations" {
 			return o.handleCommitMutations(args, state)
 		}
@@ -60,10 +62,24 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	// ==========================================
 	interceptor := func(history *[]llm.Message, lastThought string) {
 		if strings.Contains(lastThought, "[REQUEST_SCHEMA]") {
-			if !state.HasQueriedVault {
-				*history = append(*history, llm.Message{Role: "user", Content: "ERROR: You cannot request the schema yet. You must use the query_rag tool to verify the extracted entities against the vault first."})
-			} else if !state.SchemaInjected {
-				state.SchemaInjected = true
+			if !state.HasExtractedManifest {
+				*history = append(*history, llm.Message{Role: "user", Content: "ERROR: You cannot request the schema yet. You must call extract_transcript_manifest first."})
+			} else {
+				var missing []string
+				missingSet := make(map[string]bool)
+				for _, speaker := range state.ManifestSpeakers {
+					if _, ok := state.ResolvedSpeakers[speaker]; !ok {
+						if !missingSet[speaker] {
+							missing = append(missing, speaker)
+							missingSet[speaker] = true
+						}
+					}
+				}
+				if len(missing) > 0 {
+					log.Printf("\033[31m[GATE BLOCKED] Missing speakers: %v\033[0m", missing)
+					*history = append(*history, llm.Message{Role: "user", Content: fmt.Sprintf("ERROR: You cannot request the schema yet. The following speakers from your manifest have not been resolved: %v. You MUST use the query_rag tool and search for their exact literal label to resolve them.", missing)})
+				} else if !state.SchemaInjected {
+					state.SchemaInjected = true
 				newHistory := make([]llm.Message, 0, len(*history))
 				for _, m := range *history {
 					if !strings.HasPrefix(m.Content, "[SYSTEM_INJECTION_SKILL_COMMIT]") {
@@ -79,6 +95,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					Role:    "user",
 					Content: injectionContent,
 				})
+			}
 			}
 		}
 	}

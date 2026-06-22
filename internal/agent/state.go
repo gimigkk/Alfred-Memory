@@ -2,15 +2,16 @@ package agent
 
 type ingestionState struct {
 	HasExtractedManifest   bool
-	HasQueriedVault        bool
 	SchemaInjected         bool
 	ExtractedManifestLines []ExtractedManifestLine
 	LastToolResults        string
 	ValidToolNodeIDs       map[string]bool
 	ValidToolNodeTypes     map[string]string
 	ValidToolNodeContent   map[string]string
-	ExtractedSpeakers      []string
-	QueriedTerms           []string
+	ManifestSpeakers       []string
+	QueryAttempts          map[string]bool
+	ResolvedSpeakers       map[string]string
+	ExecutedQueries        map[string]bool
 }
 
 func newIngestionState() *ingestionState {
@@ -18,7 +19,9 @@ func newIngestionState() *ingestionState {
 		ValidToolNodeIDs:     make(map[string]bool),
 		ValidToolNodeTypes:   make(map[string]string),
 		ValidToolNodeContent: make(map[string]string),
-		ExtractedSpeakers:    make([]string, 0),
-		QueriedTerms:         make([]string, 0),
+		ManifestSpeakers:     make([]string, 0),
+		QueryAttempts:        make(map[string]bool),
+		ResolvedSpeakers:     make(map[string]string),
+		ExecutedQueries:      make(map[string]bool),
 	}
 }

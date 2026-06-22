@@ -10,12 +10,44 @@ import (
 )
 
 func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (string, error) {
-	state.HasQueriedVault = true
-	var parsed map[string][]string
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
 		return "", err
 	}
-	queries := parsed["queries"]
+	
+	var queries []string
+	if qRaw, ok := parsed["queries"].([]any); ok {
+		for _, q := range qRaw {
+			queryStr := fmt.Sprint(q)
+			cleanQuery := strings.TrimSpace(strings.ToLower(queryStr))
+			if cleanQuery == "" {
+				continue
+			}
+
+			isManifestSpeaker := false
+			for _, s := range state.ManifestSpeakers {
+				if s == cleanQuery {
+					isManifestSpeaker = true
+					break
+				}
+			}
+
+			if isManifestSpeaker {
+				state.QueryAttempts[cleanQuery] = true
+				queries = append(queries, queryStr)
+				state.ExecutedQueries[cleanQuery] = true
+				log.Printf("\033[90m   [Audit] Query: \"%s\" | Target: \"%s\" (Implicit Match)\033[0m", queryStr, cleanQuery)
+			} else if len(strings.TrimSpace(queryStr)) >= 2 {
+				queries = append(queries, queryStr)
+				state.ExecutedQueries[cleanQuery] = true
+				log.Printf("\033[90m   [Audit] Query: \"%s\" | Target: NONE\033[0m", queryStr)
+			}
+		}
+	}
+
+	if len(queries) == 0 {
+		return "", fmt.Errorf("ERROR: All provided queries were too short or empty. You must provide genuine search terms.")
+	}
 
 	results := make(map[string]any)
 	var allFoundNames []string
@@ -29,7 +61,6 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 
 	for i, query := range queries {
 		vec := vecs[i]
-		state.QueriedTerms = append(state.QueriedTerms, normalizeStr(query))
 		sub, err := rag.QueryRAG(o.DBConn, vec, query, 3, 60)
 		if err != nil {
 			results[query] = map[string]string{"error": err.Error()}
@@ -67,6 +98,15 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 	log.Printf("\033[33m▶ [AGENT ACTION]\033[0m Called query_rag for %d queries: %v", len(queries), queries)
 	foundAny := false
 	for _, query := range queries {
+		cleanQuery := strings.TrimSpace(strings.ToLower(query))
+		isManifestSpeaker := false
+		for _, s := range state.ManifestSpeakers {
+			if s == cleanQuery {
+				isManifestSpeaker = true
+				break
+			}
+		}
+
 		if qRes, ok := results[query].(*rag.Subgraph); ok && len(qRes.Nodes) > 0 {
 			var nodeNames []string
 			for _, n := range qRes.Nodes {
@@ -74,6 +114,13 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 			}
 			log.Printf("   └─ Result: \"%s\" → %v", query, nodeNames)
 			foundAny = true
+
+			if isManifestSpeaker {
+				// Monotonic Upgrade
+				if state.ResolvedSpeakers[cleanQuery] != "EXISTING" {
+					state.ResolvedSpeakers[cleanQuery] = "EXISTING"
+				}
+			}
 		}
 	}
 	if !foundAny {
@@ -86,6 +133,29 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 	state.LastToolResults += string(subBytes) + " "
 
 	return string(subBytes), nil
+}
+
+func (o *Orchestrator) handleDeclareNewSpeaker(args string, state *ingestionState) (string, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return "", err
+	}
+	targetSpeaker, ok := parsed["target_speaker"].(string)
+	if !ok || strings.TrimSpace(targetSpeaker) == "" {
+		return "", fmt.Errorf("ERROR: target_speaker is required.")
+	}
+	targetSpeaker = strings.ToLower(strings.TrimSpace(targetSpeaker))
+
+	if state.ResolvedSpeakers[targetSpeaker] == "EXISTING" {
+		return "", fmt.Errorf("ERROR: target_speaker '%s' is already resolved as an EXISTING entity. You cannot downgrade them to NEW.", targetSpeaker)
+	}
+	if !state.QueryAttempts[targetSpeaker] {
+		return "", fmt.Errorf("ERROR: You cannot declare '%s' as new without attempting to query them via query_rag first.", targetSpeaker)
+	}
+
+	state.ResolvedSpeakers[targetSpeaker] = "NEW"
+	log.Printf("\033[33m▶ [AGENT ACTION]\033[0m Called declare_new_speaker for '%s'. Entity marked as NEW.", targetSpeaker)
+	return fmt.Sprintf("Success: '%s' is confirmed as a new entity.", targetSpeaker), nil
 }
 
 func (o *Orchestrator) handleExtractManifest(args string, transcript string, state *ingestionState) (string, error) {
@@ -104,7 +174,8 @@ func (o *Orchestrator) handleExtractManifest(args string, transcript string, sta
 		}
 		if speakerStr, ok := mLine["speaker"].(string); ok {
 			ml.Speaker = speakerStr
-			state.ExtractedSpeakers = append(state.ExtractedSpeakers, speakerStr)
+			speakerNorm := strings.ToLower(strings.TrimSpace(speakerStr))
+			state.ManifestSpeakers = append(state.ManifestSpeakers, speakerNorm)
 		}
 		if shapeStr, ok := mLine["shape"].(string); ok {
 			ml.Shape = shapeStr
@@ -178,10 +249,14 @@ func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState)
 					nodeID, _ := mItem["node_id"].(string)
 					nodeType, _ := mItem["node_type"].(string)
 
+					var ragQuery string
 					var contentStr string
 					if props, ok := mItem["properties"].(map[string]any); ok {
 						if c, ok := props["content"].(string); ok {
 							contentStr += " " + c
+						}
+						if r, ok := props["rag_verification_query"].(string); ok {
+							ragQuery = r
 						}
 						if n, ok := props["name"].(string); ok {
 							contentStr += " " + n
@@ -193,6 +268,17 @@ func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState)
 							for _, a := range aliases {
 								contentStr += " " + fmt.Sprint(a)
 							}
+						}
+					}
+
+					if nodeType == "Person" || nodeType == "Event" || nodeType == "Project" || nodeType == "Circle" {
+						if ragQuery == "" {
+							return "", fmt.Errorf("ERROR: You are attempting to create a new %s node, but you did not provide a rag_verification_query.", nodeType)
+						}
+						
+						cleanQuery := strings.TrimSpace(strings.ToLower(ragQuery))
+						if !state.ExecutedQueries[cleanQuery] {
+							return "", fmt.Errorf("ERROR: You are attempting to create a new %s node, but our logs show you never ran the query '%s'. You must execute query_rag with this exact string to verify the entity before creating it.", nodeType, ragQuery)
 						}
 					}
 
@@ -228,25 +314,14 @@ func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState)
 		}
 
 		// Check User Resolution (Rule 16) coverage
-		for _, speaker := range state.ExtractedSpeakers {
-			if strings.HasPrefix(speaker, "_62_") {
-				continue
-			}
-			speakerNorm := normalizeStr(speaker)
-			queried := false
-			for _, qt := range state.QueriedTerms {
-				if strings.Contains(qt, speakerNorm) || strings.Contains(speakerNorm, qt) {
-					queried = true
-					break
-				}
-			}
-			if !queried {
-				return "", fmt.Errorf("ERROR: speaker '%s' appears in your extracted manifest but was never queried via query_rag. You must query for every speaker, including 'THE USER' or 'You', before committing mutations.", speaker)
+		for _, speaker := range state.ManifestSpeakers {
+			if _, ok := state.ResolvedSpeakers[speaker]; !ok {
+				return "", fmt.Errorf("ERROR: speaker '%s' appears in your extracted manifest but was never resolved. You must query for every speaker, including 'THE USER' or 'You', before committing mutations.", speaker)
 			}
 		}
 
 		// Check participant coverage
-		for _, speaker := range state.ExtractedSpeakers {
+		for _, speaker := range state.ManifestSpeakers {
 			if strings.HasPrefix(speaker, "_62_") {
 				continue
 			}
