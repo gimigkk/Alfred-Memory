@@ -10,7 +10,7 @@ Establish the full Core Loop, consisting of the end-to-end ingestion pipeline an
 ## 1. Repository Structure & Prompt Storage
 To prevent multiple Go projects in the same workspace from confusing the IDE or agents, **we will nuke the `phase0-rag` sandbox completely**. We will initialize a single Go module at the project root (`/Alfred`). The sandbox logic will be migrated into `internal/rag`.
 
-The prompts will be stored as modular markdown files in an `assets/prompts/` directory. These files will be loaded into memory at build time using Go's `//go:embed` directive to ensure the binary remains portable, atomic, and thread-safe.
+The prompts will be stored as modular markdown files in an `assets/prompts/` directory. These files will be loaded into memory at build-time using Go's `//go:embed` directive. This ensures atomic, crash-proof binaries while keeping the actual text files completely modular.
 
 ```text
 /Alfred (Root Go Module)
@@ -18,7 +18,7 @@ The prompts will be stored as modular markdown files in an `assets/prompts/` dir
 │   └── alfred/
 │       └── main.go                 # Entry point, HTTP server initialization
 ├── assets/
-│   └── prompts/                    # Embedded with //go:embed
+│   └── prompts/                    # Modular prompt components embedded with //go:embed
 │       ├── core_persona.md         # Alfred's personality and tone constraints
 │       ├── core_schema.md          # Topology, nodes, and edges constraints
 │       ├── skill_ingestion.md      # Rules for webhook manifest extraction
@@ -94,7 +94,7 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 
 ### Sub-Phase 1.1: Modular Prompt Refactoring
 - [ ] Split `assets/prompts/ingestion_agent.md` into `core_persona.md`, `core_schema.md`, `skill_ingestion.md`, and `skill_chat.md`.
-- [ ] Refactor the Go backend to load these files into memory via `//go:embed` instead of one massive monolithic file.
+- [ ] Refactor the Go backend to use a `prompts.go` file with `//go:embed assets/prompts/*.md` to securely load the modular files into memory at build time.
 - [ ] Update the `Orchestrator` to deterministically concatenate the Ingestion prompt before initiating the LLM call.
 
 ### Sub-Phase 1.2: Real Database Commits (LadybugDB)
