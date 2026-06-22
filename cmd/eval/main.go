@@ -12,6 +12,7 @@ import (
 	"github.com/gimigkk/Alfred-Memory/internal/config"
 	"github.com/gimigkk/Alfred-Memory/internal/db"
 	"github.com/gimigkk/Alfred-Memory/internal/embed"
+	"github.com/gimigkk/Alfred-Memory/internal/ladybug"
 	"github.com/gimigkk/Alfred-Memory/internal/llm"
 )
 
@@ -254,8 +255,9 @@ func main() {
 	fmt.Printf("Starting eval harness for fixture: %s (%d runs)\n\n", expected.Fixture, N)
 
 	for i := 0; i < N; i++ {
+		ladybug.ResetMock()
 		fmt.Printf("Run %d/%d...\n", i+1, N)
-		linkOut, err := orchestrator.RunAgenticIngestion(fmt.Sprintf("eval_%d", i), transcript, true)
+		linkOut, err := orchestrator.RunAgenticIngestion(fmt.Sprintf("eval_%d", i), transcript, false)
 		if err != nil {
 			fmt.Printf("  Run %d Failed: %v\n", i+1, err)
 			results = append(results, RunResult{

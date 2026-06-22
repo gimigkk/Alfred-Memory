@@ -1,12 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
-
-	"github.com/gimigkk/Alfred-Memory/internal/ladybug"
 )
 
 func (o *Orchestrator) remapTempIDs(mutations []Mutation) {
@@ -69,7 +68,19 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 
 		if m.Operation == "CREATE_NODE" || (m.Operation == "UPDATE_NODE" && m.NodeType != "") {
 			if !dryRun {
-				ladybug.AddMockNode(m.NodeID, m.NodeType, content, m.Properties)
+				var query string
+				if m.Operation == "CREATE_NODE" {
+					query = buildCreateCypher(m)
+				} else {
+					query = buildUpdateCypher(m)
+				}
+				if query != "" {
+					log.Printf("   \033[90m[CYPHER]\033[0m %s", query)
+					_, err := o.DBConn.Query(query)
+					if err != nil {
+						log.Printf("   \033[31m[DB ERROR]\033[0m Failed to execute %s: %v", m.Operation, err)
+					}
+				}
 			}
 		}
 
@@ -129,7 +140,12 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 				log.Printf("   └─ Add Edge: \033[33m%s\033[0m -> \033[32m%s\033[0m (Verified %d/%d refs)", e.RelType, e.TargetNodeID, validCount, len(e.EvidenceRefs))
 			}
 			if !dryRun {
-				ladybug.AddMockEdge(m.NodeID, e.TargetNodeID, e.RelType)
+				query := buildEdgeCypher(m.NodeID, e)
+				log.Printf("   \033[90m[CYPHER]\033[0m %s", query)
+				_, err := o.DBConn.Query(query)
+				if err != nil {
+					log.Printf("   \033[31m[DB ERROR]\033[0m Failed to create edge %s: %v", e.RelType, err)
+				}
 			}
 		}
 
@@ -137,4 +153,77 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 
 		log.Println() // Add blank line between mutations
 	}
+}
+
+func escapeCypher(val string) string {
+	val = strings.ReplaceAll(val, "\\", "\\\\")
+	return strings.ReplaceAll(val, "'", "\\'")
+}
+
+func buildCreateCypher(m Mutation) string {
+	var props []string
+	props = append(props, fmt.Sprintf("id: '%s'", escapeCypher(m.NodeID)))
+
+	for k, v := range m.Properties {
+		if k == "id" {
+			continue // Prevent LLM from overriding the root NodeID
+		}
+		switch typed := v.(type) {
+		case string:
+			props = append(props, fmt.Sprintf("%s: '%s'", k, escapeCypher(typed)))
+		case bool:
+			props = append(props, fmt.Sprintf("%s: %t", k, typed))
+		case []any:
+			var list []string
+			for _, item := range typed {
+				list = append(list, fmt.Sprintf("'%s'", escapeCypher(fmt.Sprint(item))))
+			}
+			props = append(props, fmt.Sprintf("%s: [%s]", k, strings.Join(list, ", ")))
+		default:
+			b, _ := json.Marshal(v)
+			props = append(props, fmt.Sprintf("%s: '%s'", k, escapeCypher(string(b))))
+		}
+	}
+
+	return fmt.Sprintf("CREATE (n:%s {%s})", m.NodeType, strings.Join(props, ", "))
+}
+
+func buildUpdateCypher(m Mutation) string {
+	var sets []string
+	for k, v := range m.Properties {
+		if k == "id" {
+			continue // Prevent LLM from modifying the root NodeID via properties
+		}
+		switch typed := v.(type) {
+		case string:
+			sets = append(sets, fmt.Sprintf("n.%s = '%s'", k, escapeCypher(typed)))
+		case bool:
+			sets = append(sets, fmt.Sprintf("n.%s = %t", k, typed))
+		case []any:
+			var list []string
+			for _, item := range typed {
+				list = append(list, fmt.Sprintf("'%s'", escapeCypher(fmt.Sprint(item))))
+			}
+			sets = append(sets, fmt.Sprintf("n.%s = [%s]", k, strings.Join(list, ", ")))
+		default:
+			b, _ := json.Marshal(v)
+			sets = append(sets, fmt.Sprintf("n.%s = '%s'", k, escapeCypher(string(b))))
+		}
+	}
+
+	if len(sets) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("MATCH (n) WHERE n.id = '%s' SET %s", escapeCypher(m.NodeID), strings.Join(sets, ", "))
+}
+
+func buildEdgeCypher(sourceID string, e EdgeMutation) string {
+	props := ""
+	if len(e.EvidenceRefs) > 0 {
+		b, _ := json.Marshal(e.EvidenceRefs)
+		props = fmt.Sprintf(" {evidence_refs: '%s'}", escapeCypher(string(b)))
+	}
+
+	return fmt.Sprintf("MATCH (a), (b) WHERE a.id = '%s' AND b.id = '%s' CREATE (a)-[r:%s%s]->(b)",
+		escapeCypher(sourceID), escapeCypher(e.TargetNodeID), e.RelType, props)
 }

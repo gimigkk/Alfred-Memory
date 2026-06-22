@@ -355,25 +355,34 @@ CREATE NODE TABLE Circle (
 -- Grounded in data: Rafid had "sambutan" role at SoTQ - participation alone is insufficient.
 CREATE REL TABLE PARTICIPANT_IN (
     FROM Person TO Event,
-    role STRING                     -- "sambutan" | "peserta" | "panitia" | "timekeeper" | null
+    role STRING,                    -- "sambutan" | "peserta" | "panitia" | "timekeeper" | null
+    evidence_refs STRING            -- Serialized JSON array of EvidenceRef structs
 );
 
 -- Task is assigned to a Person (the doer)
-CREATE REL TABLE ASSIGNED_TO (FROM Task TO Person);
+CREATE REL TABLE ASSIGNED_TO (
+    FROM Task TO Person,
+    evidence_refs STRING
+);
 
 -- Task was requested by a Person (the requester, may differ from assignee)
-CREATE REL TABLE REQUESTED_BY (FROM Task TO Person);
+CREATE REL TABLE REQUESTED_BY (
+    FROM Task TO Person,
+    evidence_refs STRING
+);
 
 -- Task belongs to an Event or Circle scope
 CREATE REL TABLE PART_OF (
     FROM Task TO Event,
-    FROM Task TO Circle             -- Task scoped to a Circle (e.g. a division's responsibility)
+    FROM Task TO Circle,            -- Task scoped to a Circle (e.g. a division's responsibility)
+    evidence_refs STRING
 );
 
 -- Insight is directed at a Person or Circle
 CREATE REL TABLE DIR_TOWARDS (
     FROM Insight TO Person,
-    FROM Insight TO Circle          -- Insight about a group dynamic
+    FROM Insight TO Circle,         -- Insight about a group dynamic
+    evidence_refs STRING
 );
 
 -- Causal relationship: one node directly caused another
@@ -382,7 +391,8 @@ CREATE REL TABLE CAUSED_BY (
     FROM Task TO Event,             -- Task arose from an Event
     FROM Task TO Task,              -- Task arose from another Task (explicit only, not inferred)
     FROM Event TO Event,            -- Event caused another Event (e.g. cancellation → reschedule)
-    created_at TIMESTAMP
+    created_at TIMESTAMP,
+    evidence_refs STRING
 );
 
 -- Insight is supported by observed evidence
@@ -390,7 +400,8 @@ CREATE REL TABLE CAUSED_BY (
 CREATE REL TABLE EVIDENCED_BY (
     FROM Insight TO Task,           -- Insight supported by a Task observation
     FROM Insight TO Event,          -- Insight supported by an Event observation
-    observed_at TIMESTAMP
+    observed_at TIMESTAMP,
+    evidence_refs STRING
 );
 
 -- Nightwatch conflict detection: two Insights make contradicting claims
@@ -407,7 +418,8 @@ CREATE REL TABLE KNOWS (
     FROM Person TO Person,
     descriptor STRING,              -- "teman dekat" | "rekan" | "senior" | "junior" | "kenalan"
     context STRING,                 -- Where this relationship exists
-    since TIMESTAMP
+    since TIMESTAMP,
+    evidence_refs STRING
 );
 
 -- Person belongs to a Circle, with an optional role
@@ -415,7 +427,8 @@ CREATE REL TABLE KNOWS (
 CREATE REL TABLE MEMBER_OF (
     FROM Person TO Circle,
     role STRING,                    -- "kadiv" | "manager" | "staff" | null
-    since TIMESTAMP
+    since TIMESTAMP,
+    evidence_refs STRING
 );
 
 ### Storage & Purging Strategy
