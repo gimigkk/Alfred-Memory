@@ -671,10 +671,12 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	}
 
 	log.Println("\n\033[33m[AGENT] Starting Investigation Loop...\033[0m")
-	log.Printf("\033[90m--- SYSTEM PROMPT ---\n%s\n---------------------\033[0m\n", prompts.IngestionAgentPrompt)
-	log.Printf("\033[90m--- USER PROMPT ---\n%s\n-------------------\033[0m\n", transcript)
+	systemPrompt := prompts.BuildIngestionPrompt()
 
-	mutationsJSON, err := o.LLM.GenerateAgentic(prompts.IngestionAgentPrompt, transcript, tools, executor)
+	log.Printf("\033[90m--- SYSTEM PROMPT ---\n%s\n---------------------\033[0m\n", systemPrompt)
+	log.Printf("\033[36mInitiating Agentic Ingestion Loop...\033[0m")
+
+	mutationsJSON, err := o.LLM.GenerateAgentic(systemPrompt, transcript, tools, executor)
 	if err != nil {
 		return nil, fmt.Errorf("agent loop failed: %w", err)
 	}

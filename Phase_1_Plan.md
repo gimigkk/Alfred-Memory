@@ -68,11 +68,15 @@ When a mock WAHA `curl` hits `/api/webhook`:
 6. **Temporal Maintenance:** The Go backend natively intercepts `UPDATE_NODE` operations. Before updating the node, it executes `MATCH (n) WHERE n.id = $id RETURN n.content`. It formats this old state as `"YYYY-MM-DD HH:MM - [old_content]"` and prepends it to the `history STRING[]` array, then executes the `SET` for the new content. This offloads history maintenance from the LLM and prevents data loss.
 7. **SQLite Reminder Synchronization:** If the agent commits a `Task` mutation with a `due_date`, the orchestrator automatically executes `INSERT OR REPLACE INTO reminders` against the SQLite DB so the cron job can pick it up.
 
-## 4. Prompt Composition & Modularization
-To preserve Gemini Context Caching while keeping prompts highly relevant, the Go backend will compose prompts dynamically at the *pipeline level* (not mid-loop).
-* **Ingestion Pipeline:** Go concatenates `core_persona.md` + `core_schema.md` + `skill_ingestion.md` once, before the agent starts.
-* **Chat Pipeline:** Go concatenates `core_persona.md` + `core_schema.md` + `skill_chat.md` once, before the agent starts.
-This ensures the prefix remains absolutely static during the 5-6 `query_rag` calls within the agent loop, slashing token costs while maximizing attention accuracy.
+## 4. Prompt Composition & Modularization (Additive Dynamic ReAct)
+To mathematically prevent "Lost in the Middle" instruction decay without completely breaking Google's Context Caching, Alfred uses an **Additive-with-Pruning** dynamic injection architecture within the ReAct loop.
+
+1. **Phase 1 (Discovery):** The Go backend initiates the LLM loop with only `core_persona.md` + `skill_discovery.md`. The LLM's attention is 100% focused on extracting entities and querying RAG.
+2. **The Trigger:** The `skill_discovery` prompt explicitly instructs the agent to output `[REQUEST_SCHEMA]` in its thought block when it has finished querying the vault.
+3. **The Interceptor (Prune & Append):** Go intercepts the ReAct loop mid-flight. When it detects `[REQUEST_SCHEMA]`, it sweeps the `history` slice and DELETES any previous message tagged with `[SYSTEM_INJECTION_SKILL_COMMIT]`. It then APPENDS a fresh `User` message to the end of the history containing the massive 2,000-token `core_schema.md` constraints.
+4. **Phase 2 (Topology):** The LLM receives the prompt with the strict rules placed at the absolute bottom of its context window (maximizing Recency Bias without payload bloat).
+
+Defensive guardrails inside the Orchestrator ensure the agent cannot request the schema prematurely (before querying) and cannot execute `commit_mutations` without the schema injected.
 
 ## 5. Execution Pipeline (The Chat Flow)
 The second half of the Core Loop. The user interacts via a PWA frontend connected to an `/api/chat` Go endpoint. This flow is entirely non-linear.
@@ -92,10 +96,12 @@ The second half of the Core Loop. The user interacts via a PWA frontend connecte
 ## 7. Execution Roadmap (The Sub-Phases)
 To maintain quality across this massive architectural shift, Phase 1 execution is strictly divided into the following sub-phases. We will not move to the next sub-phase until the current one is tested and verified.
 
-### Sub-Phase 1.1: Modular Prompt Refactoring
-- [ ] Split `assets/prompts/ingestion_agent.md` into `core_persona.md`, `core_schema.md`, `skill_ingestion.md`, and `skill_chat.md`.
-- [ ] Refactor the Go backend to use a `prompts.go` file with `//go:embed assets/prompts/*.md` to securely load the modular files into memory at build time.
-- [ ] Update the `Orchestrator` to deterministically concatenate the Ingestion prompt before initiating the LLM call.
+### Sub-Phase 1.1: Modular Prompt Refactoring & Dynamic ReAct
+- [ ] Split `assets/prompts/ingestion_agent.md` into `core_persona.md`, `core_schema.md`, `skill_discovery.md`, `skill_commit.md`, and `skill_chat.md`.
+- [ ] Refactor the Go backend to use `prompts.go` with `//go:embed` to securely load the modular files into memory.
+- [ ] Refactor `GenerateAgentic` in `internal/llm/router.go` to accept an `Interceptor func(history *[]Message, lastThought string)` callback to maintain the package abstraction boundary.
+- [ ] Implement the Prune & Append array manipulation logic in `orchestrator.go` via the callback.
+- [ ] Implement Defensive Guardrails in `orchestrator.go` to prevent premature or forgotten schema triggers.
 
 ### Sub-Phase 1.2: Real Database Commits (LadybugDB)
 - [ ] Excisé `AddMockNode` and `AddMockEdge` from `internal/ladybug/mock.go`.
