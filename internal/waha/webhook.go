@@ -109,20 +109,20 @@ func (b *ConversationBlock) FormatTranscript() string {
 		} else if m.Payload.Participant != "" {
 			sender = m.Payload.Participant
 		}
-		
+
 		// Strip WAHA suffixes like @c.us or @g.us
 		if len(sender) > 5 && (sender[len(sender)-5:] == "@c.us" || sender[len(sender)-5:] == "@g.us") {
 			sender = sender[:len(sender)-5]
 		}
-		
+
 		if strings.Contains(strings.ToLower(sender), "gilang") {
 			sender = "THE USER"
 		}
-		
+
 		body := m.Payload.Body
 		re := regexp.MustCompile(`(?i)(@)?(m3-117_)?gilang( muhamad w)?`)
 		body = re.ReplaceAllString(body, "@THE USER")
-		
+
 		t := time.Unix(m.Payload.Timestamp, 0).Format("2006-01-02 15:04:05")
 		transcript += fmt.Sprintf("[%s][%s]: %s\n", t, sender, body)
 	}

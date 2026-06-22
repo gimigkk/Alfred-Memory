@@ -16,7 +16,7 @@ func RRF(vectorHits map[string]int, pageRankHits map[string]float64, k int) []st
 	for id, score := range pageRankHits {
 		prList = append(prList, prHit{id: id, score: score})
 	}
-	
+
 	// Sort PR hits descending
 	sort.Slice(prList, func(i, j int) bool {
 		return prList[i].score > prList[j].score
@@ -28,12 +28,12 @@ func RRF(vectorHits map[string]int, pageRankHits map[string]float64, k int) []st
 	}
 
 	scores := make(map[string]float64)
-	
+
 	// Add vector scores
 	for id, rank := range vectorHits {
 		scores[id] += 1.0 / float64(k+rank)
 	}
-	
+
 	// Add PageRank scores
 	for id, rank := range prRanks {
 		scores[id] += 1.0 / float64(k+rank)

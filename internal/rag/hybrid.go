@@ -84,7 +84,7 @@ func QueryRAG(conn *ladybug.Connection, vec []float32, query string, topK int, r
 
 	// 4. PageRank on expanded set
 	pageRankHits := make(map[string]float64)
-	
+
 	prQuery := "CALL project_graph('g', 'Document', 'LINKS_TO') CALL pagerank('g') YIELD node, rank RETURN node.id, rank"
 	resPR, err := conn.Query(prQuery)
 	if err == nil {

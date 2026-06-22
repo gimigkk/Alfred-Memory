@@ -71,14 +71,14 @@ func main() {
 
 	http.HandleFunc("/api/vault", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		
+
 		// 1. Fetch all nodes
 		resNodes, err := conn.Query("MATCH (n) RETURN n.id, label(n), n.content, n.properties")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		
+
 		var nodes []map[string]any
 		for resNodes.HasNext() {
 			row := resNodes.GetNext()
@@ -129,7 +129,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		
+
 		var edges []map[string]string
 		for resEdges.HasNext() {
 			row := resEdges.GetNext()

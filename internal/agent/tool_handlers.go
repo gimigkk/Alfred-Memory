@@ -14,33 +14,54 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
 		return "", err
 	}
-	
-	var queries []string
+
+	var rawQueries []string
 	if qRaw, ok := parsed["queries"].([]any); ok {
 		for _, q := range qRaw {
-			queryStr := fmt.Sprint(q)
-			cleanQuery := strings.TrimSpace(strings.ToLower(queryStr))
-			if cleanQuery == "" {
-				continue
-			}
+			rawQueries = append(rawQueries, fmt.Sprint(q))
+		}
+	}
+	var targetSpeakers []string
+	if tsRaw, ok := parsed["target_speakers"].([]any); ok {
+		for _, ts := range tsRaw {
+			targetSpeakers = append(targetSpeakers, strings.TrimSpace(strings.ToLower(fmt.Sprint(ts))))
+		}
+	}
 
-			isManifestSpeaker := false
+	if len(targetSpeakers) != len(rawQueries) {
+		return "", fmt.Errorf("ERROR: target_speakers length (%d) must exactly match queries length (%d). You MUST provide a parallel array. If a query is not meant to resolve a speaker, use an empty string '' in the target_speakers array.", len(targetSpeakers), len(rawQueries))
+	}
+
+	var queries []string
+	var validTargetSpeakers []string
+
+	for i, qStr := range rawQueries {
+		speaker := targetSpeakers[i]
+		cleanQuery := strings.TrimSpace(strings.ToLower(qStr))
+
+		if speaker != "" {
+			// Validate speaker exists in manifest
+			foundSpeaker := false
 			for _, s := range state.ManifestSpeakers {
-				if s == cleanQuery {
-					isManifestSpeaker = true
+				if s == speaker {
+					foundSpeaker = true
 					break
 				}
 			}
-
-			if isManifestSpeaker {
-				state.QueryAttempts[cleanQuery] = true
-				queries = append(queries, queryStr)
+			if !foundSpeaker {
+				return "", fmt.Errorf("ERROR: target_speaker '%s' does not match any speaker in the manifest. If this is a manifest speaker, you MUST fix the typo. If it is not a speaker, pass an empty string '' for this element in target_speakers.", speaker)
+			}
+			state.QueryAttempts[speaker] = true
+			queries = append(queries, qStr)
+			validTargetSpeakers = append(validTargetSpeakers, speaker)
+			state.ExecutedQueries[cleanQuery] = true
+			log.Printf("\033[90m   [Audit] Query: \"%s\" | Target: \"%s\"\033[0m", qStr, speaker)
+		} else {
+			if len(cleanQuery) >= 2 {
+				queries = append(queries, qStr)
+				validTargetSpeakers = append(validTargetSpeakers, "")
 				state.ExecutedQueries[cleanQuery] = true
-				log.Printf("\033[90m   [Audit] Query: \"%s\" | Target: \"%s\" (Implicit Match)\033[0m", queryStr, cleanQuery)
-			} else if len(strings.TrimSpace(queryStr)) >= 2 {
-				queries = append(queries, queryStr)
-				state.ExecutedQueries[cleanQuery] = true
-				log.Printf("\033[90m   [Audit] Query: \"%s\" | Target: NONE\033[0m", queryStr)
+				log.Printf("\033[90m   [Audit] Query: \"%s\" | Target: NONE\033[0m", qStr)
 			}
 		}
 	}
@@ -97,15 +118,8 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 
 	log.Printf("\033[33m▶ [AGENT ACTION]\033[0m Called query_rag for %d queries: %v", len(queries), queries)
 	foundAny := false
-	for _, query := range queries {
-		cleanQuery := strings.TrimSpace(strings.ToLower(query))
-		isManifestSpeaker := false
-		for _, s := range state.ManifestSpeakers {
-			if s == cleanQuery {
-				isManifestSpeaker = true
-				break
-			}
-		}
+	for i, query := range queries {
+		speaker := validTargetSpeakers[i]
 
 		if qRes, ok := results[query].(*rag.Subgraph); ok && len(qRes.Nodes) > 0 {
 			var nodeNames []string
@@ -115,10 +129,10 @@ func (o *Orchestrator) handleQueryRag(args string, state *ingestionState) (strin
 			log.Printf("   └─ Result: \"%s\" → %v", query, nodeNames)
 			foundAny = true
 
-			if isManifestSpeaker {
+			if speaker != "" {
 				// Monotonic Upgrade
-				if state.ResolvedSpeakers[cleanQuery] != "EXISTING" {
-					state.ResolvedSpeakers[cleanQuery] = "EXISTING"
+				if state.ResolvedSpeakers[speaker] != "EXISTING" {
+					state.ResolvedSpeakers[speaker] = "EXISTING"
 				}
 			}
 		}
@@ -275,7 +289,7 @@ func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState)
 						if ragQuery == "" {
 							return "", fmt.Errorf("ERROR: You are attempting to create a new %s node, but you did not provide a rag_verification_query.", nodeType)
 						}
-						
+
 						cleanQuery := strings.TrimSpace(strings.ToLower(ragQuery))
 						if !state.ExecutedQueries[cleanQuery] {
 							return "", fmt.Errorf("ERROR: You are attempting to create a new %s node, but our logs show you never ran the query '%s'. You must execute query_rag with this exact string to verify the entity before creating it.", nodeType, ragQuery)

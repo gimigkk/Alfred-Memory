@@ -170,7 +170,9 @@ func evaluate(linkOut *agent.LinkingOutput, expected Expected) []CheckResult {
 										break
 									}
 								}
-								if matched { break }
+								if matched {
+									break
+								}
 							}
 						}
 						for _, edge := range m.AddEdges {
@@ -182,9 +184,13 @@ func evaluate(linkOut *agent.LinkingOutput, expected Expected) []CheckResult {
 									}
 								}
 							}
-							if matched { break }
+							if matched {
+								break
+							}
 						}
-						if matched { break }
+						if matched {
+							break
+						}
 					}
 					if !matched {
 						res.Passed = false
@@ -205,7 +211,7 @@ func evaluate(linkOut *agent.LinkingOutput, expected Expected) []CheckResult {
 
 func main() {
 	log.SetFlags(0)
-	
+
 	// 1. Load config & API clients
 	cfg := config.LoadConfig()
 	geminiEmbed := embed.NewGeminiClient(cfg.GeminiAPIKey)
@@ -261,12 +267,12 @@ func main() {
 		if err != nil {
 			fmt.Printf("  Run %d Failed: %v\n", i+1, err)
 			results = append(results, RunResult{
-				RunIndex: i, 
-				Checks: []CheckResult{{ID: "run_completed", Passed: false, Detail: err.Error()}},
+				RunIndex: i,
+				Checks:   []CheckResult{{ID: "run_completed", Passed: false, Detail: err.Error()}},
 			})
 			continue
 		}
-		
+
 		checks := evaluate(linkOut, expected)
 		checks = append(checks, CheckResult{ID: "run_completed", Passed: true})
 		results = append(results, RunResult{RunIndex: i, Mutations: linkOut.Mutations, Checks: checks})
@@ -275,7 +281,7 @@ func main() {
 	// 6. Print Score Table
 	fmt.Printf("\n============================================\n")
 	fmt.Printf("Fixture: %s  (%d runs)\n\n", expected.Fixture, N)
-	
+
 	scoreMap := make(map[string]int)
 	for _, res := range results {
 		for _, c := range res.Checks {

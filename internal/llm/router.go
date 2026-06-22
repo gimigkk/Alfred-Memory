@@ -128,7 +128,6 @@ func stripSpaces(s string) string {
 	return sb.String()
 }
 
-
 type Interceptor func(history *[]Message, lastThought string)
 
 func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, tools []ToolDef, executor func(name, args string) (string, error), interceptor Interceptor) (string, error) {

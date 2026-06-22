@@ -45,6 +45,11 @@ func init() {
 							"items":       map[string]any{"type": "string"},
 							"description": "An array of search queries (e.g. ['Bahlil', 'Friday event', 'Rafid']).",
 						},
+						"target_speakers": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "REQUIRED whenever this call is used to resolve manifest speakers. Must exactly match the length of 'queries'. For each query, provide the exact speaker label it resolves, or an empty string '' if that specific query is not for a speaker resolution. A length mismatch against 'queries' rejects the entire call.",
+						},
 					},
 					"required": []string{"queries"},
 				},

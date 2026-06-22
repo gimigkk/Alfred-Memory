@@ -77,25 +77,25 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				}
 				if len(missing) > 0 {
 					log.Printf("\033[31m[GATE BLOCKED] Missing speakers: %v\033[0m", missing)
-					*history = append(*history, llm.Message{Role: "user", Content: fmt.Sprintf("ERROR: You cannot request the schema yet. The following speakers from your manifest have not been resolved: %v. You MUST use the query_rag tool and search for their exact literal label to resolve them.", missing)})
+					*history = append(*history, llm.Message{Role: "user", Content: fmt.Sprintf("ERROR: You cannot request the schema yet. The following speakers from your manifest have not been resolved: %v. You MUST use the query_rag tool and EXPLICITLY provide the 'target_speakers' array mapping the missing speakers to your queries! It must exactly match the length of your queries array.", missing)})
 				} else if !state.SchemaInjected {
 					state.SchemaInjected = true
-				newHistory := make([]llm.Message, 0, len(*history))
-				for _, m := range *history {
-					if !strings.HasPrefix(m.Content, "[SYSTEM_INJECTION_SKILL_COMMIT]") {
-						newHistory = append(newHistory, m)
+					newHistory := make([]llm.Message, 0, len(*history))
+					for _, m := range *history {
+						if !strings.HasPrefix(m.Content, "[SYSTEM_INJECTION_SKILL_COMMIT]") {
+							newHistory = append(newHistory, m)
+						}
 					}
+					*history = newHistory
+
+					injectionContent := "[SYSTEM_INJECTION_SKILL_COMMIT]\nYou have completed the discovery phase. You must now apply the following Schema Constraints to commit your findings:\n\n" + prompts.BuildCommitPrompt()
+					log.Printf("\n\033[90m--- SYSTEM INJECTION (SKILL COMMIT) ---\n%s\n---------------------------------------\033[0m\n", injectionContent)
+
+					*history = append(*history, llm.Message{
+						Role:    "user",
+						Content: injectionContent,
+					})
 				}
-				*history = newHistory
-
-				injectionContent := "[SYSTEM_INJECTION_SKILL_COMMIT]\nYou have completed the discovery phase. You must now apply the following Schema Constraints to commit your findings:\n\n" + prompts.BuildCommitPrompt()
-				log.Printf("\n\033[90m--- SYSTEM INJECTION (SKILL COMMIT) ---\n%s\n---------------------------------------\033[0m\n", injectionContent)
-
-				*history = append(*history, llm.Message{
-					Role:    "user",
-					Content: injectionContent,
-				})
-			}
 			}
 		}
 	}

@@ -54,11 +54,9 @@ func ResetMock() {
 	mockEdges = append([][]any(nil), initialMockEdges...)
 }
 
-
-
 func (c *Connection) Query(query string) (*QueryResult, error) {
 	var rows [][]any
-	
+
 	if strings.Contains(query, "rank RETURN node.id, rank") {
 		// Mock PageRank hits
 		rows = [][]any{}
@@ -87,7 +85,7 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 	} else if strings.HasPrefix(query, "CREATE (n:") {
 		// CREATE (n:Type {id: '...', ...})
 		nodeType := ""
-		
+
 		if typeStart := strings.Index(query, "CREATE (n:"); typeStart != -1 {
 			typeEnd := strings.Index(query[typeStart+10:], " ")
 			if typeEnd != -1 {
@@ -101,9 +99,9 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 				propsStr = query[propStart+1 : propEnd]
 			}
 		}
-		
+
 		props := parseCypherProps(propsStr)
-		
+
 		id, _ := props["id"].(string)
 		content, _ := props["content"].(string)
 		mockNodes = append(mockNodes, []any{id, nodeType, content, props})
@@ -127,7 +125,7 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 		}
 		content = strings.ReplaceAll(content, "\\'", "'")
 		content = strings.ReplaceAll(content, "\\\\", "\\")
-		
+
 		for i, n := range mockNodes {
 			if n[0].(string) == id {
 				existingProps, _ := n[3].(map[string]any)
@@ -148,7 +146,7 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 		source := ""
 		target := ""
 		rel := ""
-		
+
 		if sStart := strings.Index(query, "a.id = '"); sStart != -1 {
 			sEnd := findStringEnd(query[sStart+8:])
 			if sEnd != -1 {
@@ -171,12 +169,12 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 				rel = query[rStart+14 : rStart+14+rEnd]
 			}
 		}
-		
+
 		source = strings.ReplaceAll(source, "\\'", "'")
 		source = strings.ReplaceAll(source, "\\\\", "\\")
 		target = strings.ReplaceAll(target, "\\'", "'")
 		target = strings.ReplaceAll(target, "\\\\", "\\")
-		
+
 		mockEdges = append(mockEdges, []any{source, target, rel, ""})
 		rows = [][]any{}
 

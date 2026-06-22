@@ -92,7 +92,7 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 				log.Printf("   ├─ %s: \033[37m%v\033[0m", k, v)
 			}
 		}
-		
+
 		var survivingEdges []EdgeMutation
 
 		for _, e := range m.AddEdges {
