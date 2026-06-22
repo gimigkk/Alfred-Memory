@@ -96,12 +96,12 @@ The second half of the Core Loop. The user interacts via a PWA frontend connecte
 ## 7. Execution Roadmap (The Sub-Phases)
 To maintain quality across this massive architectural shift, Phase 1 execution is strictly divided into the following sub-phases. We will not move to the next sub-phase until the current one is tested and verified.
 
-### Sub-Phase 1.1: Modular Prompt Refactoring & Dynamic ReAct
-- [ ] Split `assets/prompts/ingestion_agent.md` into `core_persona.md`, `core_schema.md`, `skill_discovery.md`, `skill_commit.md`, and `skill_chat.md`.
-- [ ] Refactor the Go backend to use `prompts.go` with `//go:embed` to securely load the modular files into memory.
-- [ ] Refactor `GenerateAgentic` in `internal/llm/router.go` to accept an `Interceptor func(history *[]Message, lastThought string)` callback to maintain the package abstraction boundary.
-- [ ] Implement the Prune & Append array manipulation logic in `orchestrator.go` via the callback.
-- [ ] Implement Defensive Guardrails in `orchestrator.go` to prevent premature or forgotten schema triggers.
+### Sub-Phase 1.1: Modular Prompt Refactoring & Dynamic ReAct (COMPLETED)
+- [x] Split `assets/prompts/ingestion_agent.md` into `core_persona.md`, `core_schema.md`, `skill_discovery.md`, `skill_commit.md`, and `skill_chat.md`.
+- [x] Integrate the Interceptor pattern into `internal/llm/router.go` to capture the `[REQUEST_SCHEMA]` string in the agent's thought process.
+- [x] Implement the `Additive-with-Pruning` history mutation logic in `internal/agent/orchestrator.go` to dynamically inject the `skill_commit.md` rules at the peak of the context window.
+- [x] Implement Anti-Premature and Anti-Forgetful state guardrails to prevent discovery-bypassing and schema-skipping.
+- [x] Harden prompt constraints: Enforce STRICT DEFAULT on 5W Clarity Checks (removing the 'operationally necessary' loophole) and mandate two unique explicit keywords for Event Inference to prevent RAG-bias hallucination.
 
 ### Sub-Phase 1.2: Real Database Commits (LadybugDB)
 - [ ] Excisé `AddMockNode` and `AddMockEdge` from `internal/ladybug/mock.go`.

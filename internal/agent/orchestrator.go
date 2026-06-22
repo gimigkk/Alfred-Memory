@@ -696,9 +696,13 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					}
 				}
 				*history = newHistory
+				
+				injectionContent := "[SYSTEM_INJECTION_SKILL_COMMIT]\nYou have completed the discovery phase. You must now apply the following Schema Constraints to commit your findings:\n\n" + prompts.BuildCommitPrompt()
+				log.Printf("\n\033[90m--- SYSTEM INJECTION (SKILL COMMIT) ---\n%s\n---------------------------------------\033[0m\n", injectionContent)
+
 				*history = append(*history, llm.Message{
 					Role:    "user",
-					Content: "[SYSTEM_INJECTION_SKILL_COMMIT]\nYou have completed the discovery phase. You must now apply the following Schema Constraints to commit your findings:\n\n" + prompts.BuildCommitPrompt(),
+					Content: injectionContent,
 				})
 			}
 		}

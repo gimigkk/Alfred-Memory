@@ -4,7 +4,8 @@ When the user requests a "courtroom" or "courtroom simulation" to debate a techn
 
 ## 1. The Setup
 - Identify the exact Proposal on Trial.
-- Establish a minimum of 5 Personas representing different engineering perspectives (e.g., The Software Architect, The Prompt Engineer, The DevOps/SRE, The Performance Engineer, The Security Auditor, The Judge).
+- Establish a minimum of 5 Personas representing different engineering perspectives (e.g., The Software Architect, The Prompt Engineer, The DevOps/SRE, The Security Auditor, The Judge).
+- **MANDATORY PERSONA:** You MUST always include **The Hostile Attacker (Prosecutor)**. This persona must be aggressively cynical, constantly looking for prompt injection loopholes, state transition vulnerabilities, architectural flaws, and semantic contradictions. They exist to shatter echo-chambers and force the other personas to defend their logic against worst-case scenarios.
 - Explicitly state each persona's inherent bias or priority before the debate begins.
 
 ## 2. The Execution (Cycles)

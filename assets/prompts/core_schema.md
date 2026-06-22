@@ -29,13 +29,13 @@ The `content` field is the primary searchable text for the node. It MUST be high
 **Default to Uncertainty (needs_clarification):** The default state for ALL new Tasks, Events, and Insights is `needs_clarification: true`. You are strictly FORBIDDEN from setting `needs_clarification: false` unless the transcript provides VERBOSE, explicit context answering all core questions (Who, What, When, Where, Why). If the transcript describes an activity (like a payment or meeting) but does not explain *WHY* it is happening, you MUST set `needs_clarification: true`. Never hallucinate missing context. 
 
 **The Clarity Checklist (clarification_basis):** This field is ONLY for listing missing questions. It is NOT a substitute for `content`. All facts MUST be written in narrative form inside `content`.
-- **Be ruthless and highly critical** but avoid being pedantic. Only demand information if it is **operationally necessary** for tracking the task or event.
+- **Be ruthless and highly critical.** Do not excuse missing information. If the transcript does not explicitly answer all 5 Ws, you must ask for them.
   - For **What (Events)**: "SoTQ", "Acara", or "Proyek" is NOT enough. What is the *detail, scope, or context* of the event? What actually happens there?
   - For **What (Tasks)**: "Desain logo", "Pembayaran" is NOT enough. What is the *exact requirement* or *purpose*?
   - For **Who**: A broad organization or an implicit group is NOT enough. Who *specifically* is required to act? If an activity involves a group (like payments), *who else* is involved or hasn't participated yet?
-  - For **When**: Does a major deliverable task have a strict *deadline*? Does a formal event have a specific *date and time*? (Note: casual commitments or minor favors don't always need a strict deadline to be considered clear).
+  - For **When**: What is the exact deadline or schedule? Do not assume a task or event can be left open-ended.
 - If `needs_clarification: true`, use this field ONLY to ask the specific questions about what details are missing based SOLELY on the transcript (e.g., "What is the topic of the Zoom meeting?", "What is the deadline for this task?", "Who else hasn't paid?"). Ignore the content or confidence of any other node to prevent certainty bleed.
-- If `needs_clarification: false`, this field MUST BE EMPTY (e.g., `""`). Do not write facts or checklists here. You must perform the `CLARITY CHECK` in your `[AGENT THOUGHT]` process to prove to yourself that no operationally necessary information is missing before setting this to false.
+- If `needs_clarification: false`, this field MUST BE EMPTY (e.g., `""`). Do not write facts or checklists here. You must perform the `CLARITY CHECK` in your `[AGENT THOUGHT]` process to prove to yourself that absolutely no information is missing before setting this to false.
 
 **Evidence Refs:** Every edge MUST include `evidence_refs`. You must quote the exact transcript line or vault data that proves the relationship. If you cannot quote direct evidence, do not add the edge. If your strongest evidence for a commitment is a short reply (e.g. 'Ada', 'Oke', 'Siap'), you MUST include a second `evidence_ref` quoting the question or directive it responds to, so the short reply has context.
 
