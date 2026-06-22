@@ -196,8 +196,12 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	var extractedSpeakers []string
 	var queriedTerms []string
 
+	hasQueriedVault := false
+	schemaInjected := false
+
 	executor := func(name, args string) (string, error) {
 		if name == "query_rag" {
+			hasQueriedVault = true
 			var parsed map[string][]string
 			if err := json.Unmarshal([]byte(args), &parsed); err != nil {
 				return "", err
@@ -334,6 +338,9 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 		} else if name == "commit_mutations" {
 			if !hasExtractedManifest {
 				return "", fmt.Errorf("ERROR: You are strictly forbidden from committing mutations until you have successfully called extract_transcript_manifest and passed validation.")
+			}
+			if !schemaInjected {
+				return "", fmt.Errorf("ERROR: You are not authorized to commit yet. You must output the thought [REQUEST_SCHEMA] to receive the graph mapping rules first.")
 			}
 
 			var parsed map[string]any
@@ -671,12 +678,33 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	}
 
 	log.Println("\n\033[33m[AGENT] Starting Investigation Loop...\033[0m")
-	systemPrompt := prompts.BuildIngestionPrompt()
+	systemPrompt := prompts.BuildDiscoveryPrompt()
 
 	log.Printf("\033[90m--- SYSTEM PROMPT ---\n%s\n---------------------\033[0m\n", systemPrompt)
 	log.Printf("\033[36mInitiating Agentic Ingestion Loop...\033[0m")
 
-	mutationsJSON, err := o.LLM.GenerateAgentic(systemPrompt, transcript, tools, executor)
+	interceptor := func(history *[]llm.Message, lastThought string) {
+		if strings.Contains(lastThought, "[REQUEST_SCHEMA]") {
+			if !hasQueriedVault {
+				*history = append(*history, llm.Message{Role: "user", Content: "ERROR: You cannot request the schema yet. You must use the query_rag tool to verify the extracted entities against the vault first."})
+			} else if !schemaInjected {
+				schemaInjected = true
+				newHistory := make([]llm.Message, 0, len(*history))
+				for _, m := range *history {
+					if !strings.HasPrefix(m.Content, "[SYSTEM_INJECTION_SKILL_COMMIT]") {
+						newHistory = append(newHistory, m)
+					}
+				}
+				*history = newHistory
+				*history = append(*history, llm.Message{
+					Role:    "user",
+					Content: "[SYSTEM_INJECTION_SKILL_COMMIT]\nYou have completed the discovery phase. You must now apply the following Schema Constraints to commit your findings:\n\n" + prompts.BuildCommitPrompt(),
+				})
+			}
+		}
+	}
+
+	mutationsJSON, err := o.LLM.GenerateAgentic(systemPrompt, transcript, tools, executor, interceptor)
 	if err != nil {
 		return nil, fmt.Errorf("agent loop failed: %w", err)
 	}

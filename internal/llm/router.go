@@ -129,7 +129,9 @@ func stripSpaces(s string) string {
 }
 
 
-func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, tools []ToolDef, executor func(name, args string) (string, error)) (string, error) {
+type Interceptor func(history *[]Message, lastThought string)
+
+func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, tools []ToolDef, executor func(name, args string) (string, error), interceptor Interceptor) (string, error) {
 	toolsJSON, _ := json.MarshalIndent(tools, "", "  ")
 	fullSystemPrompt := systemPrompt + "\n\nYou MUST respond ONLY with a JSON object. You must ALWAYS include your reasoning in a 'thought' field. To call a tool, return:\n{\"thought\": \"your reasoning...\", \"tool_name\": \"...\", \"arguments\": {...}}\n\nTools available:\n" + string(toolsJSON)
 
@@ -199,6 +201,10 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 
 		if parseAttempt.Thought != "" {
 			log.Printf("\n\033[90m[AGENT THOUGHT]\033[0m %s\n", parseAttempt.Thought)
+		}
+
+		if interceptor != nil {
+			interceptor(&history, parseAttempt.Thought)
 		}
 
 		toolName := parseAttempt.ToolName
