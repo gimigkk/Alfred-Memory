@@ -104,10 +104,10 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - [x] Harden prompt constraints: Enforce STRICT DEFAULT on 5W Clarity Checks (removing the 'operationally necessary' loophole) and mandate two unique explicit keywords for Event Inference to prevent RAG-bias hallucination.
 
 ### Sub-Phase 1.2: Real Database Commits (LadybugDB)
-- [ ] Excisé `AddMockNode` and `AddMockEdge` from `internal/ladybug/mock.go`.
-- [ ] Implement parameterized/sanitized Cypher string generation in `orchestrator.go` for `CREATE_NODE` and `MATCH... CREATE` edges.
-- [ ] Execute real mutations via `o.DBConn.Query()`.
-- [ ] Run `cmd/eval/main.go` to verify the DB engine accepts the real queries without syntax failure.
+- [x] Excisé `AddMockNode` and `AddMockEdge` from `internal/ladybug/mock.go`.
+- [x] Implement parameterized/sanitized Cypher string generation in `orchestrator.go` for `CREATE_NODE` and `MATCH... CREATE` edges.
+- [x] Execute real mutations via `o.DBConn.Query()`.
+- [x] Run `cmd/eval/main.go` to verify the DB engine accepts the real queries without syntax failure.
 
 ### Sub-Phase 1.3: Temporal Update Logistics
 - [ ] Intercept `UPDATE_NODE` operations within the Go orchestrator.
