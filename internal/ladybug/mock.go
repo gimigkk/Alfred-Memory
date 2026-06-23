@@ -126,11 +126,27 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 		content = strings.ReplaceAll(content, "\\'", "'")
 		content = strings.ReplaceAll(content, "\\\\", "\\")
 
+		historyPrefix := ""
+		if histStart := strings.Index(query, "n.history = ['"); histStart != -1 {
+			if histEnd := strings.Index(query[histStart+14:], " - ' + COALESCE"); histEnd != -1 {
+				historyPrefix = query[histStart+14 : histStart+14+histEnd] + " - "
+			}
+		}
+
 		for i, n := range mockNodes {
 			if n[0].(string) == id {
 				existingProps, _ := n[3].(map[string]any)
 				if existingProps == nil {
 					existingProps = make(map[string]any)
+				}
+				if historyPrefix != "" {
+					oldContent, _ := existingProps["content"].(string)
+					newHistoryItem := historyPrefix + oldContent
+					if histArr, ok := existingProps["history"].([]any); ok {
+						existingProps["history"] = append([]any{newHistoryItem}, histArr...)
+					} else {
+						existingProps["history"] = []any{newHistoryItem}
+					}
 				}
 				if content != "" {
 					existingProps["content"] = content

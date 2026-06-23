@@ -190,6 +190,12 @@ func buildCreateCypher(m Mutation) string {
 
 func buildUpdateCypher(m Mutation) string {
 	var sets []string
+
+	if _, hasContent := m.Properties["content"]; hasContent {
+		timestamp := time.Now().Format("2006-01-02 15:04")
+		sets = append(sets, fmt.Sprintf("n.history = ['%s - ' + COALESCE(n.content, '')] + COALESCE(n.history, [])", timestamp))
+	}
+
 	for k, v := range m.Properties {
 		if k == "id" {
 			continue // Prevent LLM from modifying the root NodeID via properties

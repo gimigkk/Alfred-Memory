@@ -110,10 +110,10 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - [x] Run `cmd/eval/main.go` to verify the DB engine accepts the real queries without syntax failure.
 
 ### Sub-Phase 1.3: Temporal Update Logistics
-- [ ] Intercept `UPDATE_NODE` operations within the Go orchestrator.
-- [ ] Execute a `MATCH (n) WHERE n.id = $id RETURN n.content` query.
-- [ ] Format the timestamp and prepend the old content to the `history STRING[]` array.
-- [ ] Execute the final `SET n.content = $new, n.history = $history` Cypher query.
+- [x] Intercept `UPDATE_NODE` operations within the Go orchestrator.
+- [x] Execute a `MATCH (n) WHERE n.id = $id RETURN n.content` query. (Superseded by Atomic Cypher)
+- [x] Format the timestamp and prepend the old content to the `history STRING[]` array. (Superseded by Atomic Cypher)
+- [x] Execute the final `SET n.content = $new, n.history = $history` Cypher query. (Implemented via Atomic Cypher)
 
 ### Sub-Phase 1.4: SQLite Reminders Integration
 - [ ] Pass the SQLite `*sql.DB` connection into the `Orchestrator` struct during initialization.
