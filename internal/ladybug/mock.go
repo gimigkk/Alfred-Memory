@@ -82,6 +82,66 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 	} else if strings.Contains(query, "RETURN d") {
 		// Used in seed.go to check if exists, return empty so it seeds
 		rows = [][]any{}
+	} else if strings.Contains(query, "MATCH (p)-[e]-(t)") && strings.Contains(query, "t.needs_clarification = true") {
+		// Intercept query_speaker_obligations
+		rows = [][]any{}
+		
+		// Extract IDs
+		idsStr := ""
+		if inStart := strings.Index(query, "p.id IN ["); inStart != -1 {
+			if inEnd := strings.Index(query[inStart+9:], "]"); inEnd != -1 {
+				idsStr = query[inStart+9 : inStart+9+inEnd]
+			}
+		}
+		
+		speakerIDs := make(map[string]bool)
+		for _, id := range strings.Split(idsStr, ",") {
+			id = strings.TrimSpace(id)
+			id = strings.Trim(id, "'")
+			if id != "" {
+				speakerIDs[id] = true
+			}
+		}
+
+		// Traverse edges from speaker to node
+		for _, edge := range mockEdges {
+			source := edge[0].(string)
+			target := edge[1].(string)
+			rel := edge[2].(string)
+
+			// Is source one of our speakers? (or wait, the query says MATCH (p)-[e]->(t) but sometimes edges point TO the speaker!)
+			// Ah! ASSIGNED_TO points from Task to Person: (Task)-[ASSIGNED_TO]->(Person)
+			// But the query says MATCH (p)-[e]->(t). This assumes speaker points to Task. But ASSIGNED_TO is Task -> Person!
+			// If the query is strictly MATCH (p)-[e]->(t), then p is source. Let's just check both directions to be safe in the mock.
+			var speakerID, nodeID string
+			if speakerIDs[source] {
+				speakerID = source
+				nodeID = target
+			} else if speakerIDs[target] {
+				speakerID = target
+				nodeID = source
+			}
+
+			if speakerID != "" {
+				// Find node target
+				for _, n := range mockNodes {
+					if n[0].(string) == nodeID {
+						props, ok := n[3].(map[string]any)
+						if ok {
+							if nc, ok := props["needs_clarification"].(bool); ok && nc {
+								content, _ := props["content"].(string)
+								cb, _ := props["clarification_basis"].(string)
+								nodeType := n[1].(string)
+								
+								// RETURN t.id, label(t), t.content, t.clarification_basis, label(e)
+								rows = append(rows, []any{nodeID, nodeType, content, cb, rel})
+							}
+						}
+						break
+					}
+				}
+			}
+		}
 	} else if strings.HasPrefix(query, "CREATE (n:") {
 		// CREATE (n:Type {id: '...', ...})
 		nodeType := ""

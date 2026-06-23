@@ -76,7 +76,10 @@ To mathematically prevent "Lost in the Middle" instruction decay without complet
 3. **The Interceptor (Prune & Append):** Go intercepts the ReAct loop mid-flight. When it detects `[REQUEST_SCHEMA]`, it sweeps the `history` slice and DELETES any previous message tagged with `[SYSTEM_INJECTION_SKILL_COMMIT]`. It then APPENDS a fresh `User` message to the end of the history containing the massive 2,000-token `core_schema.md` constraints.
 4. **Phase 2 (Topology):** The LLM receives the prompt with the strict rules placed at the absolute bottom of its context window (maximizing Recency Bias without payload bloat).
 
-Defensive guardrails inside the Orchestrator ensure the agent cannot request the schema prematurely (before querying) and cannot execute `commit_mutations` without the schema injected.
+Defensive guardrails inside the Go Orchestrator (`internal/agent/orchestrator.go`) intercept the agent's context and strictly enforce a state machine before schema injection is permitted:
+- **Gate 1 (Manifest Validation):** Blocks `[REQUEST_SCHEMA]` if `extract_transcript_manifest` has not been called.
+- **Gate 2 (Speaker Resolution):** Blocks if there are speakers in the manifest that have not been resolved via `query_rag` or explicitly declared new. The `query_rag` tool enforces a strict 1:1 `target_speakers` array matching the length of the `queries` array.
+- **Gate 3 (Temporal Obligations Check):** Blocks if the agent has not called the `query_speaker_obligations` tool for its resolved speakers. This forces the agent to check for existing `needs_clarification: true` nodes to perform temporal updates (`UPDATE_NODE`) instead of creating duplicate nodes.
 
 ## 5. Execution Pipeline (The Chat Flow)
 The second half of the Core Loop. The user interacts via a PWA frontend connected to an `/api/chat` Go endpoint. This flow is entirely non-linear.
@@ -110,10 +113,10 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - [x] Run `cmd/eval/main.go` to verify the DB engine accepts the real queries without syntax failure.
 
 ### Sub-Phase 1.3: Temporal Update Logistics
-- [x] Intercept `UPDATE_NODE` operations within the Go orchestrator.
-- [x] Execute a `MATCH (n) WHERE n.id = $id RETURN n.content` query. (Superseded by Atomic Cypher)
-- [x] Format the timestamp and prepend the old content to the `history STRING[]` array. (Superseded by Atomic Cypher)
-- [x] Execute the final `SET n.content = $new, n.history = $history` Cypher query. (Implemented via Atomic Cypher)
+- [ ] Intercept `UPDATE_NODE` operations within the Go orchestrator.
+- [ ] Execute a `MATCH (n) WHERE n.id = $id RETURN n.content` query. (Superseded by Atomic Cypher)
+- [ ] Format the timestamp and prepend the old content to the `history STRING[]` array. (Superseded by Atomic Cypher)
+- [ ] Execute the final `SET n.content = $new, n.history = $history` Cypher query. (Implemented via Atomic Cypher)
 
 ### Sub-Phase 1.4: SQLite Reminders Integration
 - [ ] Pass the SQLite `*sql.DB` connection into the `Orchestrator` struct during initialization.

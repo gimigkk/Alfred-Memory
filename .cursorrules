@@ -2,8 +2,8 @@
 
 ## Initialization (Start of Session)
 1. **Mandatory Reading**: Before starting any work or planning, you MUST read `Alfred.md`. This is the absolute source of truth for the project's architecture, database schemas, and core concepts.
-2. **Phase Plans**: Identify the current phase the user is working on (e.g., `Phase_1_Plan.md`) and read it. Do not execute tasks that violate the rules established in the phase plan.
-3. **Acknowledge Context**: Do not guess file structures or database fields. Refer strictly to the schema definitions in the documentation.
+2. **Phase Plans & Architecture Docs**: Identify the current phase the user is working on (e.g., `Phase_1_Plan.md`) and read it. For deeper technical specifics (like database mocking or Go orchestrator logic), you MUST check the `docs/architecture/` directory before writing code.
+3. **Acknowledge Context**: Do not guess file structures, database fields, or whether the database is real/mocked. Refer strictly to the schema definitions and architecture docs.
 
 ## General Principles
 1. **Anti-Tunnel Vision (Prompting & Logic)**: Never hardcode exact phrases, quotes, or overly specific edge cases from test data into system prompts, documentation, or validation logic. Always generalize test cases into conceptual principles. Do not overfit to a single test.

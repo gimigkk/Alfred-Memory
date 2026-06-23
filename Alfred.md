@@ -254,6 +254,13 @@ Gemini API is the primary inference provider (via `llmRouter`). If a call hits r
 ### Database: LadybugDB
 Following the October 2025 acquisition of Kùzu Inc. by Apple and the subsequent archiving of the Kuzu repository, this project uses **LadybugDB** - the direct open-source community successor. It runs **in-process** inside the compiled Go binary via CGO bindings (`go-ladybug`), maintaining an ultra-lightweight memory footprint suitable for a 4GB VPS.
 
+> [!WARNING]
+> **TEMPORARY MOCK PIVOT:** The actual C++ LadybugDB implementation has been temporarily swapped out for a pure **in-memory Go mock** (`internal/ladybug/mock.go`) to bypass CGO compilation issues encountered during early pipeline testing. 
+> 
+> All graph entities (Bahlil, BEM, etc.) are hardcoded directly into the `mockNodes` array in memory. **Every time the server restarts, the database starts completely fresh and automatically seeded.** There is NO on-disk persistence (the `.lbug` directory is unused), and no external seeder scripts or `os.RemoveAll()` logic should be used.
+> 
+> *For details, see `docs/architecture/database_mock_layer.md`.*
+
 ### Identity Resolution (Bypassing the `@lid` Bug)
 Raw WhatsApp JIDs mutate and rotate dynamically across different clients, making them unreliable as database keys.
 - `Person.id` is a **generated stable UUID**.
@@ -773,3 +780,17 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 65 | **Mandatory Hostile Persona in Simulation** | The Courtroom simulation now explicitly mandates a "Hostile Attacker (Prosecutor)" persona to aggressively stress-test structural vulnerabilities, prompt injection loopholes, and edge cases, preventing echo-chamber approvals for architectural changes. | Jun 22, 2026 |
 | 66 | **Strict 5W Clarity Defaults** | Removed the "operationally necessary" loophole from the Clarity Guard. Any Task or Event missing explicit Who/What/When/Where/Why must be flagged `needs_clarification: true`. Null hypothesis for Event linking requires two unique matching keywords, preventing RAG-induced semantic hallucination. | Jun 22, 2026 |
 | 67 | **1:1 Parallel Array Target Resolution** | To solve batch cardinality limits in `query_rag` while preserving explicit intent and result-based verification, the agent uses a 1:1 `target_speakers` array matching its `queries` array. A mismatched length instantly rejects the tool call, eliminating hidden state failures. | Jun 23, 2026 |
+| 68 | **In-Memory Mock Database Pivot** | Replaced the actual C++ LadybugDB with a pure in-memory Go mock (`internal/ladybug/mock.go`) to bypass severe CGO compilation blocks during Phase 1 pipeline testing. No on-disk persistence until CGO issues are resolved. | Jun 23, 2026 |
+| 69 | **Obligations Interceptor Gate** | Added `query_speaker_obligations` as a mandatory Go-side gate before schema request. Forces the agent to query the graph for existing `needs_clarification` nodes to perform temporal updates rather than creating duplicate nodes. | Jun 23, 2026 |
+| 70 | **Documentation Suite Redesign** | Core bibles (`Alfred.md`, `Phase_1_Plan.md`) are stripped of low-level mechanics, pushing detailed architecture and flow documentation into `docs/architecture/`. `.geminirules` updated to mandate reading these before coding. | Jun 23, 2026 |
+
+---
+
+## 16. Documentation Suite Index
+
+For low-level mechanics, refer to the modular documentation in `docs/`:
+
+- `docs/architecture/database_mock_layer.md` — Explains the in-memory `mock.go` pivot and how to query it.
+- `docs/architecture/agent_orchestrator.md` — Details the Go-side interceptor pattern and tool gates.
+- `docs/ai_skills/courtroom.md` — Constraints and persona rules for running AI architectural debates.
+

@@ -92,7 +92,7 @@ func WebhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	block.Messages = append(block.Messages, payload)
-	log.Printf("📥 [Step 1] Message %s queued for chat %s. Current queue size: %d", payload.Payload.ID, chatID, len(block.Messages))
+	log.Printf("[Step 1] %s: %s", payload.Payload.Participant, payload.Payload.Body)
 	blocksMu.Unlock()
 
 	w.WriteHeader(http.StatusOK)

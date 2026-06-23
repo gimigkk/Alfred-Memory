@@ -373,7 +373,19 @@ function generateTooltipHTML(node) {
         if (key === 'embedding' || key === 'verbatim_vector') return;
         
         let valStr = '';
-        if (Array.isArray(val)) {
+        if (key === 'history' && Array.isArray(val)) {
+            if (val.length === 0) return;
+            valStr = `<div class="history-timeline">` + val.map(item => {
+                const itemStr = String(item);
+                const parts = itemStr.split(' - ');
+                if (parts.length >= 2) {
+                    const time = escapeHtml(parts[0]);
+                    const content = escapeHtml(parts.slice(1).join(' - '));
+                    return `<div class="timeline-item"><div class="timeline-time">${time}</div><div class="timeline-content">${content}</div></div>`;
+                }
+                return `<div class="timeline-item"><div class="timeline-content">${escapeHtml(itemStr)}</div></div>`;
+            }).join('') + `</div>`;
+        } else if (Array.isArray(val)) {
             if (val.length === 0) return;
             valStr = `<ul class="tooltip-list">${val.map(item => `<li>${escapeHtml(String(item))}</li>`).join('')}</ul>`;
         } else if (typeof val === 'object') {

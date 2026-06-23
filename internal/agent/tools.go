@@ -75,6 +75,24 @@ func init() {
 		{
 			Type: "function",
 			Function: llm.FunctionDef{
+				Name:        "query_speaker_obligations",
+				Description: "MANDATORY after resolving speakers. Returns all existing unclarified Tasks and Events connected to the resolved speakers. This helps you identify nodes that the current transcript might clarify, so you can UPDATE_NODE instead of creating duplicates.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"speaker_ids": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "Array of resolved speaker node IDs (e.g. ['person_apta', 'person_nadine']). These must be IDs returned by previous query_rag calls.",
+						},
+					},
+					"required": []string{"speaker_ids"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
 				Name:        "commit_mutations",
 				Description: "Commit the final graph mutations to the vault once all entities are resolved. This is all-or-nothing: if it returns an error, the entire batch is rejected. You must resubmit all mutations in your next attempt. YOU MUST CALL extract_transcript_manifest FIRST.",
 				Parameters: map[string]any{

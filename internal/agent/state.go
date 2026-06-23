@@ -1,17 +1,18 @@
 package agent
 
 type ingestionState struct {
-	HasExtractedManifest   bool
-	SchemaInjected         bool
-	ExtractedManifestLines []ExtractedManifestLine
-	LastToolResults        string
-	ValidToolNodeIDs       map[string]bool
-	ValidToolNodeTypes     map[string]string
-	ValidToolNodeContent   map[string]string
-	ManifestSpeakers       []string
-	QueryAttempts          map[string]bool
-	ResolvedSpeakers       map[string]string
-	ExecutedQueries        map[string]bool
+	HasExtractedManifest    bool
+	SchemaInjected          bool
+	HasQueriedObligations   bool
+	ExtractedManifestLines  []ExtractedManifestLine
+	LastToolResults         string
+	ValidToolNodeIDs        map[string]bool
+	ValidToolNodeTypes      map[string]string
+	ValidToolNodeContent    map[string]string
+	ManifestSpeakers        []string
+	QueryAttempts           map[string]bool
+	ResolvedSpeakers        map[string]string
+	ExecutedQueries         map[string]bool
 }
 
 func newIngestionState() *ingestionState {

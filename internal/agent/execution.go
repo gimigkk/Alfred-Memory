@@ -66,7 +66,7 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 		}
 		log.Printf("%s🔨 Mutation: [%s] %s (ID: %s)\033[0m", color, m.Operation, m.NodeType, m.NodeID)
 
-		if m.Operation == "CREATE_NODE" || (m.Operation == "UPDATE_NODE" && m.NodeType != "") {
+		if m.Operation == "CREATE_NODE" || m.Operation == "UPDATE_NODE" {
 			if !dryRun {
 				var query string
 				if m.Operation == "CREATE_NODE" {

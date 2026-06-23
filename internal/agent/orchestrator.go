@@ -45,6 +45,8 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 			return o.handleExtractManifest(args, transcript, state)
 		} else if name == "declare_new_speaker" {
 			return o.handleDeclareNewSpeaker(args, state)
+		} else if name == "query_speaker_obligations" {
+			return o.handleQuerySpeakerObligations(args, state)
 		} else if name == "commit_mutations" {
 			return o.handleCommitMutations(args, state)
 		}
@@ -54,7 +56,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	log.Println("\n\033[33m[AGENT] Starting Investigation Loop...\033[0m")
 	systemPrompt := prompts.BuildDiscoveryPrompt()
 
-	log.Printf("\033[90m--- SYSTEM PROMPT ---\n%s\n---------------------\033[0m\n", systemPrompt)
+	log.Printf("\033[90m--- [SKILL DISCOVERY] injected ---\033[0m\n")
 	log.Printf("\033[36mInitiating Agentic Ingestion Loop...\033[0m")
 
 	// ==========================================
@@ -78,6 +80,16 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 				if len(missing) > 0 {
 					log.Printf("\033[31m[GATE BLOCKED] Missing speakers: %v\033[0m", missing)
 					*history = append(*history, llm.Message{Role: "user", Content: fmt.Sprintf("ERROR: You cannot request the schema yet. The following speakers from your manifest have not been resolved: %v. You MUST use the query_rag tool and EXPLICITLY provide the 'target_speakers' array mapping the missing speakers to your queries! It must exactly match the length of your queries array.", missing)})
+				} else if !state.HasQueriedObligations {
+					log.Printf("\033[31m[GATE BLOCKED] Must call query_speaker_obligations first\033[0m")
+					// Collect resolved speaker IDs to guide the agent
+					var resolvedIDs []string
+					for id, nodeType := range state.ValidToolNodeTypes {
+						if nodeType == "Person" {
+							resolvedIDs = append(resolvedIDs, id)
+						}
+					}
+					*history = append(*history, llm.Message{Role: "user", Content: fmt.Sprintf("ERROR: You cannot request the schema yet. You MUST call query_speaker_obligations first with the resolved speaker IDs to check for existing unclarified nodes. Resolved speakers: %v", resolvedIDs)})
 				} else if !state.SchemaInjected {
 					state.SchemaInjected = true
 					newHistory := make([]llm.Message, 0, len(*history))
@@ -89,7 +101,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 					*history = newHistory
 
 					injectionContent := "[SYSTEM_INJECTION_SKILL_COMMIT]\nYou have completed the discovery phase. You must now apply the following Schema Constraints to commit your findings:\n\n" + prompts.BuildCommitPrompt()
-					log.Printf("\n\033[90m--- SYSTEM INJECTION (SKILL COMMIT) ---\n%s\n---------------------------------------\033[0m\n", injectionContent)
+					log.Printf("\n\033[90m--- [SKILL COMMIT] injected ---\033[0m\n")
 
 					*history = append(*history, llm.Message{
 						Role:    "user",

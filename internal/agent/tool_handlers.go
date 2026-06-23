@@ -232,12 +232,128 @@ func (o *Orchestrator) handleExtractManifest(args string, transcript string, sta
 	return "Manifest accepted. You may now query_rag or commit_mutations.", nil
 }
 
+func (o *Orchestrator) handleQuerySpeakerObligations(args string, state *ingestionState) (string, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return "", err
+	}
+
+	var speakerIDs []string
+	if raw, ok := parsed["speaker_ids"].([]any); ok {
+		for _, s := range raw {
+			speakerIDs = append(speakerIDs, fmt.Sprint(s))
+		}
+	}
+	if len(speakerIDs) == 0 {
+		return "", fmt.Errorf("ERROR: speaker_ids array is required and must not be empty")
+	}
+
+	// Validate all IDs were returned by previous query_rag calls
+	for _, id := range speakerIDs {
+		if !state.ValidToolNodeIDs[id] {
+			return "", fmt.Errorf("ERROR: speaker_id '%s' was never returned by query_rag. You can only query obligations for resolved speakers", id)
+		}
+	}
+
+	state.HasQueriedObligations = true
+
+	// Build Cypher IN list
+	idsList := "["
+	for i, id := range speakerIDs {
+		if i > 0 {
+			idsList += ", "
+		}
+		idsList += fmt.Sprintf("'%s'", escapeCypher(id))
+	}
+	idsList += "]"
+
+	// Direct graph traversal: find all unclarified Task/Event nodes connected to these speakers
+	query := fmt.Sprintf(`
+		MATCH (p)-[e]-(t)
+		WHERE p.id IN %s
+		  AND t.needs_clarification = true
+		RETURN t.id, label(t), t.content, t.clarification_basis, label(e)
+	`, idsList)
+
+	res, err := o.DBConn.Query(query)
+	if err != nil {
+		log.Printf("   \033[33m[WARNING]\033[0m query_speaker_obligations query failed: %v. Proceeding without obligations context.", err)
+		return "{}", nil
+	}
+
+	type obligation struct {
+		NodeID             string `json:"node_id"`
+		NodeType           string `json:"node_type"`
+		Content            string `json:"content"`
+		ClarificationBasis string `json:"clarification_basis"`
+		EdgeType           string `json:"edge_type"`
+	}
+
+	var obligations []obligation
+	seen := make(map[string]bool)
+
+	for res.HasNext() {
+		tuple := res.GetNext()
+		nodeID, _ := tuple[0].(string)
+		nodeType, _ := tuple[1].(string)
+		content, _ := tuple[2].(string)
+		clarBasis, _ := tuple[3].(string)
+		edgeType, _ := tuple[4].(string)
+
+		if !seen[nodeID] {
+			seen[nodeID] = true
+			obligations = append(obligations, obligation{
+				NodeID:             nodeID,
+				NodeType:           nodeType,
+				Content:            content,
+				ClarificationBasis: clarBasis,
+				EdgeType:           edgeType,
+			})
+
+			// Register these nodes as valid for UPDATE_NODE
+			state.ValidToolNodeIDs[nodeID] = true
+			state.ValidToolNodeTypes[nodeID] = nodeType
+			state.ValidToolNodeContent[nodeID] = content
+		}
+	}
+	res.Close()
+
+	log.Printf("\033[33m▶ [AGENT ACTION]\033[0m Called query_speaker_obligations for %d speakers. Found %d unclarified nodes.", len(speakerIDs), len(obligations))
+	for _, ob := range obligations {
+		log.Printf("   └─ %s (%s): %s", ob.NodeID, ob.NodeType, truncate(ob.Content, 80))
+	}
+	if len(obligations) == 0 {
+		log.Printf("   └─ No unclarified obligations found.")
+	}
+
+	result, _ := json.Marshal(obligations)
+	state.LastToolResults += string(result) + " "
+	return string(result), nil
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState) (string, error) {
 	if !state.HasExtractedManifest {
 		return "", fmt.Errorf("ERROR: You are strictly forbidden from committing mutations until you have successfully called extract_transcript_manifest and passed validation.")
 	}
 	if !state.SchemaInjected {
 		return "", fmt.Errorf("ERROR: You are not authorized to commit yet. You must output the thought [REQUEST_SCHEMA] to receive the graph mapping rules first.")
+	}
+
+	// Strict schema validation first
+	var rootPayload struct {
+		Mutations []Mutation `json:"mutations"`
+	}
+	dec := json.NewDecoder(strings.NewReader(args))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rootPayload); err != nil {
+		return "", fmt.Errorf("JSON Schema Error: %v. You likely hallucinated an unknown field (e.g. nesting 'mutations' inside a mutation object instead of directly placing 'add_edges' in it). Stick strictly to the required schema.", err)
 	}
 
 	var parsed map[string]any
