@@ -41,6 +41,23 @@ Storing raw transcripts as graph nodes pollutes the world model. Alfred complete
 
 ---
 
+## Agent Toolkits
+
+Alfred runs two distinct LLM agent loops, each equipped with its own specialized JSON-schema toolkit.
+
+| Tool | Pipeline | Purpose |
+|---|---|---|
+| `query_rag` | `Ingestion` `Chat` | Searches the memory vault for existing semantic matches (Nodes) and their relationships (Edges). |
+| `extract_transcript_manifest` | `Ingestion` | Analyzes a raw transcript and outputs an ordered array of participants and actions. Required to pass Gate 1. |
+| `declare_new_speaker` | `Ingestion` | Explicitly registers a previously unknown participant found in the chat block. |
+| `query_speaker_obligations` | `Ingestion` | Fetches any existing tasks with `needs_clarification: true` for the resolved participants. Required to pass Gate 3. |
+| `commit_mutations` | `Ingestion` | Submits the final graph changes (`CREATE_NODE`, `UPDATE_NODE`, and `add_edges`). Payload is strictly validated. |
+| `query_node_history` | `Chat` | Fetches the immutable chronological `history STRING[]` for a specific node to resolve temporal ambiguity. |
+| `create_node`, `update_node`, `delete_node` | `Chat` | Performs explicit, mid-chat graph mutations based on user directives. |
+| `upsert_reminder`, `check_reminders` | `Ingestion` `Chat` | Read/Write tools for the separate SQLite `reminders.db`. |
+| `ask_user_for_hint` | `Chat` | Deliberately yields execution back to the user if the graph lacks the context needed to answer a question. |
+
+---
 ## Current Status
 
 We are currently deep into **Phase 1: The Core Ingestion Engine**.
