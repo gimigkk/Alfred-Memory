@@ -54,7 +54,7 @@ func main() {
 	defer sqliteDB.Close()
 
 	// 3. Setup Orchestrator
-	orchestrator := agent.NewOrchestrator(llmRouter, geminiEmbed, conn)
+	orchestrator := agent.NewOrchestrator(llmRouter, geminiEmbed, conn, sqliteDB, cfg.OwnerID)
 
 	// Register webhook callback
 	waha.OnBlockCommitted = func(block *waha.ConversationBlock) {
@@ -164,6 +164,40 @@ func main() {
 			"nodes": nodes,
 			"edges": edges,
 		})
+	})
+
+	http.HandleFunc("/api/reminders", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		rows, err := sqliteDB.Query("SELECT id, node_id, deadline, is_sent, message FROM Reminders")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		var reminders []map[string]any
+		for rows.Next() {
+			var id, nodeID, deadline, message string
+			var isSent bool
+			if err := rows.Scan(&id, &nodeID, &deadline, &isSent, &message); err != nil {
+				log.Printf("Failed to scan reminder row: %v", err)
+				continue
+			}
+			reminders = append(reminders, map[string]any{
+				"id":       id,
+				"node_id":  nodeID,
+				"deadline": deadline,
+				"is_sent":  isSent,
+				"message":  message,
+			})
+		}
+		
+		if reminders == nil {
+			reminders = []map[string]any{}
+		}
+
+		json.NewEncoder(w).Encode(reminders)
 	})
 
 	http.Handle("/", http.FileServer(http.Dir("./public")))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -164,7 +165,11 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 					query = buildUpdateCypher(m)
 				}
 				if query != "" {
-					log.Printf("   \033[90m[CYPHER]\033[0m %s", query)
+					logQuery := query
+					re := regexp.MustCompile(`,?\s*(?:n\.)?embedding\s*[:=]\s*\[[^\]]+\],?`)
+					logQuery = re.ReplaceAllString(logQuery, "")
+
+					log.Printf("   \033[90m[CYPHER]\033[0m %s", logQuery)
 					_, err := o.DBConn.Query(query)
 					if err != nil {
 						log.Printf("   \033[31m[DB ERROR]\033[0m Failed to execute %s: %v", m.Operation, err)
@@ -177,9 +182,13 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 			log.Printf("   ├─ Content: \033[37m%s\033[0m", content)
 		}
 		for k, v := range m.Properties {
-			if k != "content" {
-				log.Printf("   ├─ %s: \033[37m%v\033[0m", k, v)
+			if k == "content" {
+				continue
 			}
+			if k == "embedding" {
+				continue
+			}
+			log.Printf("   ├─ %s: \033[37m%v\033[0m", k, v)
 		}
 
 		var survivingEdges []EdgeMutation
@@ -239,6 +248,70 @@ func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript st
 		}
 
 		mutations[i].AddEdges = survivingEdges
+
+		// --- REMINDER SYNC INTERCEPTOR ---
+		if !dryRun && (m.NodeType == "Task" || m.NodeType == "") {
+			isAssigned := false
+			// Check if any mutation assigns the OwnerID to this Task
+			// MUST iterate by index — range copies structs and won't see updated AddEdges
+			for j := range mutations {
+				if mutations[j].NodeID == o.OwnerID {
+					for _, e := range mutations[j].AddEdges {
+						if (e.RelType == "ASSIGNED_TO" || e.RelType == "MENTIONED_IN") && e.TargetNodeID == m.NodeID {
+							isAssigned = true
+							log.Printf("   \033[90m[REMINDER MATCH]\033[0m %s -> %s via %s", o.OwnerID, m.NodeID, e.RelType)
+							break
+						}
+					}
+				}
+			}
+
+			// If it's an update, we assume we should check if it has a due_date. 
+			// In a real DB we would query if the task belongs to OwnerID.
+			// Since we use mock, we will aggressively sync if it's assigned OR if it's an update to a task we are touching.
+			hasDueDateUpdate := false
+			if _, ok := m.Properties["due_date"]; ok {
+				hasDueDateUpdate = true
+			}
+
+			if isAssigned || (m.Operation == "UPDATE_NODE" && hasDueDateUpdate) {
+				// We need content and due_date. Fallback if missing in properties.
+				dueDateStr, _ := m.Properties["due_date"].(string)
+				if dueDateStr == "" {
+					dueDateStr = time.Now().Add(6 * time.Hour).Format(time.RFC3339)
+					log.Printf("   \033[33m[REMINDER FALLBACK]\033[0m No due_date found. Applying +6h fallback: %s", dueDateStr)
+				}
+
+				msg, _ := m.Properties["content"].(string)
+				if msg == "" {
+					// try to get from title
+					msg, _ = m.Properties["title"].(string)
+				}
+				if msg == "" && m.Operation == "UPDATE_NODE" {
+					msg = "Updated task" // fallback message if we don't fetch from DB
+				}
+
+				remID := m.NodeID
+				
+				// Execute SQLite Upsert
+				if o.SQLiteDB != nil {
+					_, err := o.SQLiteDB.Exec(`
+						INSERT INTO Reminders (id, node_id, deadline, is_sent, message) 
+						VALUES (?, ?, ?, ?, ?) 
+						ON CONFLICT(id) DO UPDATE SET 
+						deadline=excluded.deadline, 
+						message=excluded.message,
+						is_sent=excluded.is_sent
+					`, remID, m.NodeID, dueDateStr, false, msg)
+					
+					if err != nil {
+						log.Printf("   \033[31m[REMINDER ERROR]\033[0m Failed to sync reminder %s: %v", remID, err)
+					} else {
+						log.Printf("   \033[32m[REMINDER SYNC]\033[0m Synced task to SQLite Reminders. ID: %s, Deadline: %s", remID, dueDateStr)
+					}
+				}
+			}
+		}
 
 		log.Println() // Add blank line between mutations
 	}

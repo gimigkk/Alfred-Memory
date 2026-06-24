@@ -224,6 +224,11 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 		}
 
 		if toolName != "" {
+			if parseAttempt.Arguments == nil && len(parseAttempt.Mutations) > 0 {
+				parseAttempt.Arguments = map[string]interface{}{
+					"mutations": parseAttempt.Mutations,
+				}
+			}
 			argsJSON, _ := json.Marshal(parseAttempt.Arguments)
 			argsStr := string(argsJSON)
 			toolResult, err := executor(toolName, argsStr)

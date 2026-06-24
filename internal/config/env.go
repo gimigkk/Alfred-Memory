@@ -10,6 +10,7 @@ import (
 type Config struct {
 	GeminiAPIKey string
 	GroqAPIKey   string
+	OwnerID      string
 }
 
 func LoadConfig() *Config {
@@ -28,8 +29,14 @@ func LoadConfig() *Config {
 		log.Fatal("GROQ_API_KEY is missing from environment")
 	}
 
+	ownerID := os.Getenv("OWNER_ID")
+	if ownerID == "" {
+		ownerID = "USER_GILANG"
+	}
+
 	return &Config{
 		GeminiAPIKey: geminiKey,
 		GroqAPIKey:   groqKey,
+		OwnerID:      ownerID,
 	}
 }

@@ -832,10 +832,57 @@ async function fetchGraph() {
         updateGraphStyles(false);
         
     } catch (e) {
-        console.error("Error fetching graph:", e);
+        console.error("Error fetching graph data:", e);
     }
 }
 
-// Poll every 2 seconds
+async function fetchReminders() {
+    try {
+        const response = await fetch('/api/reminders');
+        if (!response.ok) return;
+        const reminders = await response.json();
+        
+        const container = document.getElementById('reminders-content');
+        if (!reminders || reminders.length === 0) {
+            container.innerHTML = '<div style="text-align:center; color:#64748b; font-size:12px; padding: 20px 0;">No active reminders</div>';
+            return;
+        }
+
+        let html = '';
+        reminders.forEach(r => {
+            const statusBadge = r.is_sent ? '<span class="badge badge-success">Sent</span>' : '<span class="badge badge-Insight">Pending</span>';
+            let date = '';
+            try {
+                date = new Date(r.deadline).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'});
+            } catch(e) {
+                date = escapeHtml(r.deadline);
+            }
+            html += `
+                <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom: 6px;">
+                        <span class="node-id" style="font-family: ui-monospace, monospace; font-size: 10px; color: #64748b;">${escapeHtml(r.id)}</span>
+                        ${statusBadge}
+                    </div>
+                    <div style="font-size: 13px; color: #0f172a; margin-bottom: 8px; font-weight: 600; line-height: 1.4;">
+                        ${escapeHtml(r.message)}
+                    </div>
+                    <div style="font-size: 11px; color: #64748b; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-family: ui-monospace, monospace;">Task: ${escapeHtml(r.node_id.substring(r.node_id.indexOf('_')+1, r.node_id.indexOf('_')+9))}</span>
+                        <span style="color: #ef4444; font-weight:700;">${date}</span>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    } catch(e) {
+        console.error("Error fetching reminders", e);
+    }
+}
+
+// Initial fetches
+fetchGraph();
+fetchReminders();
+
+// Polling interval
 setInterval(fetchGraph, 2000);
-fetchGraph(); // Initial fetch
+setInterval(fetchReminders, 5000);

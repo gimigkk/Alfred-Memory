@@ -63,6 +63,7 @@
 20. **CRITICAL ANTI-HALLUCINATION RULE (No Message Nodes):** You are STRICTLY FORBIDDEN from creating a node to represent a message, a chat, a conversation, or a status update. Nodes must ONLY represent real-world Tasks, Events, Circles, Projects, or Insights. If a transcript message contains an update about a task (e.g., "logo is done"), you MUST use `UPDATE_NODE` on the existing Task and update its `status` or `content`. You MUST NOT create a separate node to represent the message itself.
 21. **CRITICAL ANTI-METADATA BLEEDING RULE:** You are STRICTLY FORBIDDEN from extracting organizational context, titles, or event names from system metadata. Usernames, user IDs, phone numbers, email domains, or suffixes (e.g., `_ieee`, `@g.us`, `_admin`) are pure identity anchors. Never assume that a generic 'panitia' belongs to 'IEEE' just because the speaker's username ends in `_ieee`. If the exact parent organization is not explicitly spoken in the text, you MUST NOT create a Circle or infer parentage from metadata. Follow Rule 15's deferral process; additionally, your `note` field in the `group_mentions` object must explicitly explain why metadata-based inference was rejected (e.g., "parent org unclear, suffix suggests _ieee but not spoken").
 22. **CRITICAL SCHEMA INTEGRITY RULE:** When issuing a `CREATE_NODE` or `UPDATE_NODE` mutation, you MUST place the `add_edges` array at the ROOT level of the mutation object. You are STRICTLY FORBIDDEN from nesting `add_edges` inside the `properties` object. If you nest it, the Go struct decoder will fail and reject your entire commit.
+23. **CRITICAL DEADLINE ESTIMATION RULE:** If a Task is assigned to 'THE USER' (or 'You') and no explicit deadline is mentioned in the transcript, you MUST provide a reasonable estimated `due_date` in the properties rather than leaving it empty. Do this ONLY for the user's tasks. It is better to remind the user early than to miss an obligation. You should infer an appropriate short-term deadline based on the conversational context, and you MUST format it as a valid ISO8601 timestamp (e.g., "2026-06-25T17:00:00Z"). Do not use conversational strings like "tomorrow".
 
 ## Required Output Format
 
@@ -85,6 +86,7 @@ You must format your final output strictly according to this abstract schema to 
           "verbatim": "[String: Exact quote from transcript]",
           "needs_clarification": true,
           "clarification_basis": "[String: Missing Who/What/When/Why]",
+          "due_date": "[String: Optional ISO8601 timestamp. REQUIRED if task assigned to THE USER]",
           "rag_verification_query": "[String: Exact query used during discovery]",
           "group_mentions": [{"speaker": "username", "phrase": "panitia inti"}]
         },

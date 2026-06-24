@@ -26,6 +26,18 @@ body {
     width: 360px;
 }
 
+.right-container {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    z-index: 10;
+    max-height: calc(100vh - 40px);
+    width: 360px;
+}
+
 .glass-header {
     background: #ffffff;
     border: none;

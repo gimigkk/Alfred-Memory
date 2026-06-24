@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/gimigkk/Alfred-Memory/assets/prompts"
 	"github.com/gimigkk/Alfred-Memory/internal/embed"
@@ -13,16 +15,20 @@ import (
 )
 
 type Orchestrator struct {
-	LLM    *llm.RouterClient
-	Embed  *embed.GeminiClient
-	DBConn *ladybug.Connection
+	LLM      *llm.RouterClient
+	Embed    *embed.GeminiClient
+	DBConn   *ladybug.Connection
+	SQLiteDB *sql.DB
+	OwnerID  string
 }
 
-func NewOrchestrator(llm *llm.RouterClient, embed *embed.GeminiClient, dbConn *ladybug.Connection) *Orchestrator {
+func NewOrchestrator(llm *llm.RouterClient, embed *embed.GeminiClient, dbConn *ladybug.Connection, sqliteDB *sql.DB, ownerID string) *Orchestrator {
 	return &Orchestrator{
-		LLM:    llm,
-		Embed:  embed,
-		DBConn: dbConn,
+		LLM:      llm,
+		Embed:    embed,
+		DBConn:   dbConn,
+		SQLiteDB: sqliteDB,
+		OwnerID:  ownerID,
 	}
 }
 
@@ -55,6 +61,7 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 
 	log.Println("\n\033[33m[AGENT] Starting Investigation Loop...\033[0m")
 	systemPrompt := prompts.BuildDiscoveryPrompt()
+	systemPrompt = strings.ReplaceAll(systemPrompt, "{{CURRENT_TIMESTAMP_ISO8601}}", time.Now().Format(time.RFC3339))
 
 	log.Printf("\033[90m--- [SKILL DISCOVERY] injected ---\033[0m\n")
 	log.Printf("\033[36mInitiating Agentic Ingestion Loop...\033[0m")
