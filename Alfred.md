@@ -459,7 +459,7 @@ The pipeline is exposed to the agent as a callable tool (`query_rag`) with confi
 ### query_rag Output Shape
 `query_rag` returns a **subgraph**, not a flat node list: `{ nodes: [...], edges: [...] }`.
 - Every node carries at minimum `id`, `node_type`, and its schema fields (`content`, `name`, `aliases`, status fields, etc.) — `id` and `node_type` are the handles every write tool keys off.
-- Every edge carries `from_id`, `to_id`, `rel_type`, and direction, plus any edge-only properties (`PARTICIPANT_IN.role`, `KNOWS.descriptor`/`context`, `MEMBER_OF.role`, `CAUSED_BY.created_at`, etc.) — this is metadata that lives only on the relationship and has nowhere else to surface.
+- Every edge carries `from_id`, `to_id`, `rel_type`, and direction, plus any edge-only properties (`HAS_ROLE.evidence_refs`, `KNOWS.descriptor`/`context`, `MEMBER_OF.role`, `LINKS_TO.context`, etc.) — this is metadata that lives only on the relationship and has nowhere else to surface.
 
 This preserves the structural context that the old manual traversal loop made explicit step-by-step, and gives any future relationship-editing tool the edge identity it needs to act.
 

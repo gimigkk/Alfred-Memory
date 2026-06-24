@@ -47,10 +47,15 @@ Based on the Decision Log, all nodes (except `Person`) get a `content`, `history
 * `Insight (id STRING, content STRING, category STRING, confidence STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
 
 ### LadybugDB Edges
-* `PARTICIPANT_IN` (FROM Person TO Event, role STRING)
-* `MEMBER_OF` (FROM Person TO Circle, role STRING)
-* `KNOWS` (FROM Person TO Person, descriptor STRING, context STRING)
-* `LINKS_TO` (FROM Task TO Event, context STRING) *(Generic link)*
+* `ASSIGNED_TO` (FROM Person TO Task)
+* `MENTIONED_IN` (FROM Person TO Task/Event)
+* `HAS_ROLE` (FROM Person TO Event)
+* `MEMBER_OF` (FROM Person TO Circle, role STRING, since TIMESTAMP)
+* `PART_OF` (FROM Task TO Event/Circle)
+* `DIR_TOWARDS` (FROM Insight TO Person/Circle)
+* `LINKS_TO` (Universal generic link, context STRING)
+* `CONTRADICTS` (FROM Insight TO Insight, detected_at TIMESTAMP, resolved BOOLEAN)
+* `KNOWS` (FROM Person TO Person, descriptor STRING, context STRING, since TIMESTAMP)
 
 ### SQLite Schema (`reminders.db`)
 * `Reminders (id TEXT PRIMARY KEY, node_id TEXT, deadline DATETIME, is_sent BOOLEAN, message TEXT)`
