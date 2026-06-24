@@ -15,19 +15,21 @@ func InitLadybugSchema(conn *ladybug.Connection) error {
 	queries := []string{
 		// Nodes
 		"CREATE NODE TABLE Person (id STRING, name STRING, phone_number STRING, aliases STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, PRIMARY KEY(id))",
-		"CREATE NODE TABLE Circle (id STRING, name STRING, aliases STRING[], content STRING, verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
-		"CREATE NODE TABLE Task (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, due_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
-		"CREATE NODE TABLE Event (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, start_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
-		"CREATE NODE TABLE Insight (id STRING, content STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
-		"CREATE NODE TABLE ConversationBlock (id STRING, chat_id STRING, raw_transcript STRING, created_at TIMESTAMP, PRIMARY KEY(id))",
+		"CREATE NODE TABLE Circle (id STRING, name STRING, aliases STRING[], title STRING, content STRING, verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
+		"CREATE NODE TABLE Task (id STRING, title STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, due_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, group_mentions STRING, embedding FLOAT[768], PRIMARY KEY(id))",
+		"CREATE NODE TABLE Event (id STRING, title STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, start_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, group_mentions STRING, embedding FLOAT[768], PRIMARY KEY(id))",
+		"CREATE NODE TABLE Insight (id STRING, title STRING, content STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768], PRIMARY KEY(id))",
 
 		// Edges
-		"CREATE REL TABLE PARTICIPANT_IN (FROM Person TO Event, role STRING)",
-		"CREATE REL TABLE MEMBER_OF (FROM Person TO Circle, role STRING)",
-		"CREATE REL TABLE KNOWS (FROM Person TO Person, descriptor STRING, context STRING)",
-		"CREATE REL TABLE CAUSED_BY (FROM Task TO ConversationBlock, context STRING)",
-		"CREATE REL TABLE EVIDENCED_BY (FROM Insight TO ConversationBlock, context STRING)",
-		"CREATE REL TABLE LINKS_TO (FROM Task TO Event, FROM Task TO Insight, FROM Task TO Task, FROM Event TO Insight, FROM Event TO Event, FROM Insight TO Insight, context STRING)",
+		"CREATE REL TABLE ASSIGNED_TO (FROM Person TO Task, evidence_refs STRING)",
+		"CREATE REL TABLE MENTIONED_IN (FROM Person TO Task, FROM Person TO Event, evidence_refs STRING)",
+		"CREATE REL TABLE HAS_ROLE (FROM Person TO Event, evidence_refs STRING)",
+		"CREATE REL TABLE MEMBER_OF (FROM Person TO Circle, role STRING, since TIMESTAMP, evidence_refs STRING)",
+		"CREATE REL TABLE PART_OF (FROM Task TO Event, FROM Task TO Circle, evidence_refs STRING)",
+		"CREATE REL TABLE DIR_TOWARDS (FROM Insight TO Person, FROM Insight TO Circle, evidence_refs STRING)",
+		"CREATE REL TABLE LINKS_TO (FROM Task TO Event, FROM Task TO Insight, FROM Task TO Task, FROM Event TO Insight, FROM Event TO Event, FROM Insight TO Insight, context STRING, evidence_refs STRING)",
+		"CREATE REL TABLE CONTRADICTS (FROM Insight TO Insight, detected_at TIMESTAMP, resolved BOOLEAN)",
+		"CREATE REL TABLE KNOWS (FROM Person TO Person, descriptor STRING, context STRING, since TIMESTAMP, evidence_refs STRING)",
 
 		// Vector Indexes
 		"CREATE VECTOR INDEX circle_vec_idx ON Circle(embedding)",

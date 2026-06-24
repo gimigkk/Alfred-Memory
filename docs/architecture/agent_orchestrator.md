@@ -60,5 +60,19 @@ When the Orchestrator intercepts the `[REQUEST_SCHEMA]` token in the LLM's thoug
    - **Condition:** The JSON payload in `commit_mutations` must exactly match the expected Go struct fields.
    - **Mechanism:** The Orchestrator uses `json.NewDecoder(bytes.NewReader(byteArgs)).DisallowUnknownFields()`.
    - **Failure Action:** If the LLM hallucinates nested arrays, invents new fields, or fails to wrap mutations inside `{"arguments": {"mutations": [...]}}`, the Go decoder throws a `json: unknown field` error. The Orchestrator intercepts this and feeds it directly back into the ReAct loop as a Tool Error, forcing the LLM to instantly self-correct its payload structure.
+   > **Note on Properties Validation Gap:** `DisallowUnknownFields()` does not recursively validate the inner `properties` `map[string]interface{}`. This means if the LLM hallucinates keys inside the `properties` map, they are silently ignored rather than triggering an error. This is a known issue.
 
-Only when all gates pass does the Orchestrator strip the history array of clutter and append the `skill_commit.md` schema prompt.
+5. **Gate 5: Invariant Data Operations (No Circle Creation)**
+   - **Condition:** `node_type != "Circle"` when `operation == "CREATE_NODE"`.
+   - **Failure Action:** Hard-rejects the payload with a specific error explicitly stating: *"Inline Circle creation is currently STRICTLY FORBIDDEN... You MUST capture the reference in the group_mentions array"*. This absolute, mechanical guardrail prevents the LLM from defying Layer 1 Mention Capture rules.
+
+Only when all gates pass does the Orchestrator execute the final database transaction.
+
+## Prompt-Level Constraints
+
+While the Go Orchestrator manages the phase transitions, the actual generation of mutations is governed by strict, formalized Thought structures required within `skill_commit.md`:
+
+1. **`ROLE CHECK`**: Forces explicit determination of execution burden before creating `ASSIGNED_TO` vs `MENTIONED_IN` edges.
+2. **`EVENT CHECK`**: Demands a two-keyword threshold match before associating tasks with overarching events.
+3. **`CLARITY CHECK`**: Structurally forces the LLM to verify Who/What/When/Why completeness to determine `needs_clarification`.
+4. **`UPDATE CHECK` (Topic Alignment Constraint)**: Before any `UPDATE_NODE` is issued for an existing unclarified node, the LLM MUST explicitly query: `Does the overarching topic of this node match the transcript?` This prevents cross-topic data bleeding (e.g., merging "Reimbursement" details into a "Welcoming Speech" event simply because the speakers overlap).

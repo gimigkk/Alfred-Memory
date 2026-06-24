@@ -11,6 +11,13 @@ type EdgeMutation struct {
 	EvidenceRefs []EvidenceRef `json:"evidence_refs,omitempty"`
 }
 
+type GroupMention struct {
+	Speaker string `json:"speaker"`
+	Phrase  string `json:"phrase"`
+	Quote   string `json:"quote"`
+	Note    string `json:"note,omitempty"` // Layer 1 writes this when resolving ambiguity or rejecting metadata
+}
+
 type Mutation struct {
 	Operation  string                 `json:"operation"` // CREATE_NODE or UPDATE_NODE
 	NodeType   string                 `json:"node_type,omitempty"`

@@ -98,6 +98,10 @@ func init() {
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
+						"thought": map[string]any{
+							"type":        "string",
+							"description": "MANDATORY: You MUST write your MANDATORY SYSTEM CHECKS (ROLE CHECK, DUAL-LINK CHECK, EVENT CHECK, CIRCLE CHECK, CLARITY CHECK, UPDATE CHECK) here before committing.",
+						},
 						"mutations": map[string]any{
 							"type": "array",
 							"items": map[string]any{
@@ -111,9 +115,16 @@ func init() {
 										"properties": map[string]any{
 											"rag_verification_query": map[string]any{
 												"type":        "string",
-												"description": "REQUIRED for CREATE_NODE on Person, Event, Project, or Circle. The exact string you queried via query_rag to verify this entity didn't exist.",
+												"description": "REQUIRED for CREATE_NODE on Person, Event, or Project. The exact string you queried via query_rag to verify this entity didn't exist.",
 											},
-											"content":             map[string]any{"type": "string"},
+											"title": map[string]any{
+												"type":        "string",
+												"description": "REQUIRED for CREATE_NODE on Task, Event, Insight. A highly condensed 3-5 word title for vector search.",
+											},
+											"content": map[string]any{
+												"type":        "string",
+												"description": "REQUIRED for CREATE_NODE. The pure narrative content. DO NOT prepend a bracketed title here. Use the 'title' field for the title.",
+											},
 											"status":              map[string]any{"type": "string"},
 											"verbatim":            map[string]any{"type": "string"},
 											"needs_clarification": map[string]any{"type": "boolean"},
@@ -121,7 +132,21 @@ func init() {
 												"type":        "string",
 												"description": "REQUIRED for Task/Event/Insight. Explain your deduction based solely on what this transcript says about this entity — ignore the content or confidence of any other node in this same mutation set.",
 											},
+											"group_mentions": map[string]any{
+												"type": "array",
+												"items": map[string]any{
+													"type": "object",
+													"properties": map[string]any{
+														"speaker": map[string]any{"type": "string"},
+														"phrase":  map[string]any{"type": "string"},
+														"quote":   map[string]any{"type": "string"},
+														"note":    map[string]any{"type": "string"},
+													},
+													"required": []string{"speaker", "phrase", "quote"},
+												},
+											},
 										},
+										"required": []string{"title", "content"},
 									},
 									"add_edges": map[string]any{
 										"type": "array",

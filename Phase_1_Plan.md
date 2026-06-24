@@ -38,12 +38,12 @@ The prompts will be stored as modular markdown files in an `assets/prompts/` dir
 
 ## 2. Database Schema (DDL)
 
-### LadybugDB Nodes
+### LadybugDB Nodes (Mocked in memory)
 Based on the Decision Log, all nodes (except `Person`) get a `content`, `history`, `created_at`, `aliases`, and `embedding` field.
 * `Person (id STRING, name STRING, phone_number STRING, aliases STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN)`
-* `Circle (id STRING, name STRING, aliases STRING[], content STRING, verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])`
-* `Task (id STRING, content STRING, aliases STRING[], verbatim STRING, status STRING, due_date TIMESTAMP, priority STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
-* `Event (id STRING, content STRING, aliases STRING[], status STRING, event_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
+* `Circle (id STRING, name STRING, aliases STRING[], title STRING, content STRING, verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, embedding FLOAT[768])` Note: No longer created inline by the ingestion agent. Created via Layer 2 batch promotion.
+* `Task (id STRING, content STRING, aliases STRING[], verbatim STRING, group_mentions STRING, status STRING, due_date TIMESTAMP, priority STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
+* `Event (id STRING, content STRING, aliases STRING[], status STRING, group_mentions STRING, event_date TIMESTAMP, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
 * `Insight (id STRING, content STRING, category STRING, confidence STRING, aliases STRING[], verbatim STRING, history STRING[], created_at TIMESTAMP, needs_clarification BOOLEAN, clarification_basis STRING, embedding FLOAT[768])`
 
 ### LadybugDB Edges
@@ -106,17 +106,18 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - [x] Implement Anti-Premature and Anti-Forgetful state guardrails to prevent discovery-bypassing and schema-skipping.
 - [x] Harden prompt constraints: Enforce STRICT DEFAULT on 5W Clarity Checks (removing the 'operationally necessary' loophole) and mandate two unique explicit keywords for Event Inference to prevent RAG-bias hallucination.
 
-### Sub-Phase 1.2: Real Database Commits (LadybugDB)
-- [x] Excisé `AddMockNode` and `AddMockEdge` from `internal/ladybug/mock.go`.
-- [x] Implement parameterized/sanitized Cypher string generation in `orchestrator.go` for `CREATE_NODE` and `MATCH... CREATE` edges.
-- [x] Execute real mutations via `o.DBConn.Query()`.
-- [x] Run `cmd/eval/main.go` to verify the DB engine accepts the real queries without syntax failure.
+### Sub-Phase 1.2: Mock Database Pivot & Schema Guardrails (COMPLETED)
+- `[x]` Pause CGO/LadybugDB integration due to VPS compilation blockers. Revert `internal/ladybug/mock.go` to handle fully parsed graph state in memory.
+- `[x]` Implement Layer 1 Circle Deferral: remove `Circle` node creation from ingestion agent and add `group_mentions` property to Tasks/Events.
+- `[x]` Implement Gate 5 in `internal/agent/tool_handlers.go` to mechanically hard-reject inline Circle creations.
+- `[x]` Harden JSON parsing via `DisallowUnknownFields()` and Rule 22 to eliminate property-nesting hallucinations.
+- `[x]` Restructure test suite into domain-specific stress point folders (e.g., `01_core_extraction`, `03_advanced_hubbing`).
 
-### Sub-Phase 1.3: Temporal Update Logistics
-- [ ] Intercept `UPDATE_NODE` operations within the Go orchestrator.
-- [ ] Execute a `MATCH (n) WHERE n.id = $id RETURN n.content` query. (Superseded by Atomic Cypher)
-- [ ] Format the timestamp and prepend the old content to the `history STRING[]` array. (Superseded by Atomic Cypher)
-- [ ] Execute the final `SET n.content = $new, n.history = $history` Cypher query. (Implemented via Atomic Cypher)
+### Sub-Phase 1.3: Temporal Update Logistics (COMPLETED)
+- `[x]` Intercept `UPDATE_NODE` operations within the Go orchestrator.
+- `[x]` Execute a `MATCH (n) WHERE n.id = $id RETURN n.content` query. (Superseded by Atomic Cypher)
+- `[x]` Format the timestamp and prepend the old content to the `history STRING[]` array. (Superseded by Atomic Cypher)
+- `[x]` Execute the final `SET n.content = $new, n.history = $history` Cypher query. (Implemented via Atomic Cypher in `execution.go`)
 
 ### Sub-Phase 1.4: SQLite Reminders Integration
 - [ ] Pass the SQLite `*sql.DB` connection into the `Orchestrator` struct during initialization.

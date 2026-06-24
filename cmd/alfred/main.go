@@ -101,6 +101,21 @@ func main() {
 				properties["content"] = content
 			}
 
+			// Deserialize group_mentions for Task and Event
+			if nodeType == "Task" || nodeType == "Event" {
+				if gmRaw, exists := properties["group_mentions"]; exists {
+					if gmStr, ok := gmRaw.(string); ok {
+						var parsed []agent.GroupMention
+						if err := json.Unmarshal([]byte(gmStr), &parsed); err != nil {
+							log.Printf("\033[33m[WARNING]\033[0m Failed to unmarshal group_mentions for node %s: %v", nodeID, err)
+							properties["group_mentions"] = []agent.GroupMention{}
+						} else {
+							properties["group_mentions"] = parsed
+						}
+					}
+				}
+			}
+
 			// Use name or content as label
 			label := content
 			if nodeType == "Person" {

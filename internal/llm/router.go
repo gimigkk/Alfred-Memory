@@ -87,7 +87,10 @@ func (c *RouterClient) fetchAvailableModels() {
 			for _, m := range resGroq.Data {
 				name := m.ID
 				if !strings.Contains(name, "whisper") && !strings.Contains(name, "guard") && !strings.Contains(name, "safeguard") && !strings.Contains(name, "orpheus") {
-					groqModels = append(groqModels, "groq/"+name)
+					// User requested to only remove small groq models
+					if !strings.Contains(name, "-8b") && !strings.Contains(name, "-7b") {
+						groqModels = append(groqModels, "groq/"+name)
+					}
 				}
 			}
 		}
@@ -160,12 +163,18 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 			if provider == "gemini" {
 				content, err = c.callGemini(model, fullSystemPrompt, history)
 			} else {
+				// Groq models have a strict 8000 TPM/Context limit on the current tier.
+				// Skip them entirely if the prompt is massive to avoid 413 errors.
+				if len(fullSystemPrompt) > 20000 {
+					log.Printf("Prompt is %d chars, skipping Groq model %s due to 8k token limit.", len(fullSystemPrompt), modelRef)
+					continue
+				}
 				content, err = c.callGroq(model, fullSystemPrompt, history)
 			}
 
 			if err != nil {
 				if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "502") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "504") {
-					log.Printf("Model %s hit rate limit or server error. Placed on 1 minute cooldown. Trying next...", modelRef)
+					log.Printf("\033[31mModel %s hit rate limit or server error: %s. Placed on 1 minute cooldown. Trying next...\033[0m", modelRef, err.Error())
 					c.Cooldowns[modelRef] = time.Now().Add(1 * time.Minute)
 					lastErr = err.Error()
 					continue
@@ -180,7 +189,10 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 		}
 
 		if !success {
-			return "", fmt.Errorf("all models failed. last error: %s", lastErr)
+			log.Printf("All models failed or on cooldown. Sleeping 15s and retrying step... (last error: %s)", lastErr)
+			time.Sleep(15 * time.Second)
+			step-- // don't waste a reasoning step
+			continue
 		}
 
 		history = append(history, Message{Role: "assistant", Content: content})

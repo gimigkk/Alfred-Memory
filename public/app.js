@@ -346,7 +346,13 @@ function generateTooltipHTML(node) {
     const group = node.group;
     
     let html = `<div class="tooltip-content">`;
-    html += `<div class="tooltip-header"><span class="node-id">${escapeHtml(node.id)}</span><span class="node-type badge-${group}">${escapeHtml(group)}</span></div>`;
+    html += `<div class="tooltip-header"><span class="node-id">${escapeHtml(node.id)}</span>`;
+    
+    if ((group === 'Task' || group === 'Event') && Array.isArray(props.group_mentions) && props.group_mentions.length > 0) {
+        html += `<span class="node-type badge-Insight" style="margin-right: 8px; text-transform: none;">${props.group_mentions.length} group mentions</span>`;
+    }
+    
+    html += `<span class="node-type badge-${group}">${escapeHtml(group)}</span></div>`;
     html += `<div class="tooltip-body">`;
     
     const keys = Object.keys(props).sort();
@@ -354,9 +360,9 @@ function generateTooltipHTML(node) {
     if (group === 'Person') {
         orderedKeys = ['name', 'phone_number', 'aliases', 'created_at', 'needs_clarification'];
     } else if (group === 'Task') {
-        orderedKeys = ['content', 'status', 'due_date', 'priority', 'aliases', 'verbatim', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
+        orderedKeys = ['content', 'status', 'due_date', 'priority', 'aliases', 'verbatim', 'group_mentions', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
     } else if (group === 'Event') {
-        orderedKeys = ['content', 'status', 'start_date', 'aliases', 'verbatim', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
+        orderedKeys = ['content', 'status', 'start_date', 'aliases', 'verbatim', 'group_mentions', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
     } else if (group === 'Insight') {
         orderedKeys = ['content', 'aliases', 'verbatim', 'history', 'created_at', 'needs_clarification', 'clarification_basis'];
     } else if (group === 'Circle') {
@@ -384,6 +390,30 @@ function generateTooltipHTML(node) {
                     return `<div class="timeline-item"><div class="timeline-time">${time}</div><div class="timeline-content">${content}</div></div>`;
                 }
                 return `<div class="timeline-item"><div class="timeline-content">${escapeHtml(itemStr)}</div></div>`;
+            }).join('') + `</div>`;
+        } else if (key === 'group_mentions' && Array.isArray(val)) {
+            if (val.length === 0) return;
+            valStr = `<div class="history-timeline">` + val.map(mention => {
+                let mHtml = `<div class="timeline-item">`;
+                
+                if (mention.speaker) {
+                    mHtml += `<div class="timeline-time">${escapeHtml(mention.speaker)}</div>`;
+                } else {
+                    mHtml += `<div class="timeline-time">Unknown</div>`;
+                }
+                
+                mHtml += `<div class="timeline-content">`;
+                if (mention.phrase) {
+                    mHtml += `<strong>${escapeHtml(mention.phrase)}</strong>`;
+                }
+                if (mention.note) {
+                    mHtml += `<span class="badge badge-Insight" style="margin-left:8px; font-size:9px; vertical-align:middle;">${escapeHtml(mention.note)}</span>`;
+                }
+                if (mention.quote) {
+                    mHtml += `<div style="font-size:0.9em; opacity:0.7; margin-top:4px;">"${escapeHtml(mention.quote)}"</div>`;
+                }
+                mHtml += `</div></div>`;
+                return mHtml;
             }).join('') + `</div>`;
         } else if (Array.isArray(val)) {
             if (val.length === 0) return;

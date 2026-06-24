@@ -13,7 +13,7 @@ type Config struct {
 }
 
 func LoadConfig() *Config {
-	err := godotenv.Load()
+	err := godotenv.Overload()
 	if err != nil {
 		log.Println("Warning: No .env file found, falling back to system environment variables")
 	}

@@ -43,6 +43,95 @@ func (o *Orchestrator) remapTempIDs(mutations []Mutation) {
 }
 
 func (o *Orchestrator) executeAndVerifyEdges(mutations []Mutation, transcript string, state *ingestionState, dryRun bool) {
+	// --- TITLE GUARD ---
+	// Proactively fix LLM hallucinations where it puts the title inside brackets in the content field
+	for i := range mutations {
+		m := &mutations[i]
+		log.Printf("   \033[33m[DEBUG TITLE GUARD]\033[0m Processing mutation: %s", m.Operation)
+		if m.Operation == "CREATE_NODE" || m.Operation == "UPDATE_NODE" {
+			title, _ := m.Properties["title"].(string)
+			content, _ := m.Properties["content"].(string)
+			log.Printf("   \033[33m[DEBUG TITLE GUARD]\033[0m ID: %s, Title: '%s', Content: '%s'", m.NodeID, title, content)
+
+			
+			if title == "" && strings.HasPrefix(content, "[") {
+				idx := strings.Index(content, "]")
+				if idx != -1 {
+					m.Properties["title"] = content[1:idx]
+					
+					// Strip the prefix and " - " if it exists
+					remainder := strings.TrimSpace(content[idx+1:])
+					if strings.HasPrefix(remainder, "- ") {
+						remainder = strings.TrimSpace(remainder[2:])
+					}
+					m.Properties["content"] = remainder
+					log.Printf("   \033[33m[TITLE GUARD]\033[0m Extracted title '%s' from content", m.Properties["title"])
+				}
+			}
+		}
+	}
+
+	// --- BATCH EMBEDDING PHASE ---
+	var embedTexts []string
+	var embedMutations []*Mutation
+
+	for i := range mutations {
+		m := &mutations[i]
+		if m.Operation == "CREATE_NODE" && m.NodeType != "Person" {
+			title, _ := m.Properties["title"].(string)
+			content, _ := m.Properties["content"].(string)
+			log.Printf("   \033[90m[EMBED TRACE]\033[0m CREATE_NODE: %s, title: '%s', content: '%s'", m.NodeType, title, content)
+			if title != "" || content != "" {
+				embedTexts = append(embedTexts, title+" - "+content)
+				embedMutations = append(embedMutations, m)
+			}
+		} else if m.Operation == "UPDATE_NODE" {
+			title, hasTitle := m.Properties["title"].(string)
+			content, hasContent := m.Properties["content"].(string)
+			log.Printf("   \033[90m[EMBED TRACE]\033[0m UPDATE_NODE: %s, hasTitle: %v, hasContent: %v", m.NodeID, hasTitle, hasContent)
+
+			if hasTitle || hasContent {
+				// We need both to create the new embedding. Fetch missing from DB.
+				if !hasTitle || !hasContent {
+					query := fmt.Sprintf("MATCH (n) WHERE n.id = '%s' RETURN n.title, n.content", escapeCypher(m.NodeID))
+					res, err := o.DBConn.Query(query)
+					if err == nil && res.HasNext() {
+						tuple := res.GetNext()
+						if !hasTitle {
+							if t, ok := tuple[0].(string); ok {
+								title = t
+							}
+						}
+						if !hasContent {
+							if c, ok := tuple[1].(string); ok {
+								content = c
+							}
+						}
+					}
+					if res != nil {
+						res.Close()
+					}
+				}
+				embedTexts = append(embedTexts, title+" - "+content)
+				embedMutations = append(embedMutations, m)
+			}
+		}
+	}
+
+	if len(embedTexts) > 0 && !dryRun {
+		vecs, err := o.Embed.GetVectors(embedTexts)
+		if err != nil {
+			log.Printf("   \033[31m[EMBED ERROR]\033[0m Failed to batch embed %d nodes: %v", len(embedTexts), err)
+		} else {
+			for i, m := range embedMutations {
+				if i < len(vecs) {
+					m.Properties["embedding"] = vecs[i]
+				}
+			}
+			log.Printf("   \033[32m[EMBED]\033[0m Successfully batched generated %d embeddings.", len(vecs))
+		}
+	}
+
 	transcriptLines := strings.Split(transcript, "\n")
 
 	for i, m := range mutations {
@@ -174,9 +263,20 @@ func buildCreateCypher(m Mutation) string {
 		case bool:
 			props = append(props, fmt.Sprintf("%s: %t", k, typed))
 		case []any:
+			if k == "group_mentions" {
+				b, _ := json.Marshal(typed)
+				props = append(props, fmt.Sprintf("%s: '%s'", k, escapeCypher(string(b))))
+				continue
+			}
 			var list []string
 			for _, item := range typed {
 				list = append(list, fmt.Sprintf("'%s'", escapeCypher(fmt.Sprint(item))))
+			}
+			props = append(props, fmt.Sprintf("%s: [%s]", k, strings.Join(list, ", ")))
+		case []float32:
+			var list []string
+			for _, item := range typed {
+				list = append(list, fmt.Sprintf("%f", item))
 			}
 			props = append(props, fmt.Sprintf("%s: [%s]", k, strings.Join(list, ", ")))
 		default:
@@ -206,9 +306,20 @@ func buildUpdateCypher(m Mutation) string {
 		case bool:
 			sets = append(sets, fmt.Sprintf("n.%s = %t", k, typed))
 		case []any:
+			if k == "group_mentions" {
+				b, _ := json.Marshal(typed)
+				sets = append(sets, fmt.Sprintf("n.%s = '%s'", k, escapeCypher(string(b))))
+				continue
+			}
 			var list []string
 			for _, item := range typed {
 				list = append(list, fmt.Sprintf("'%s'", escapeCypher(fmt.Sprint(item))))
+			}
+			sets = append(sets, fmt.Sprintf("n.%s = [%s]", k, strings.Join(list, ", ")))
+		case []float32:
+			var list []string
+			for _, item := range typed {
+				list = append(list, fmt.Sprintf("%f", item))
 			}
 			sets = append(sets, fmt.Sprintf("n.%s = [%s]", k, strings.Join(list, ", ")))
 		default:

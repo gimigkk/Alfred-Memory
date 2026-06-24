@@ -267,56 +267,75 @@ func (o *Orchestrator) handleQuerySpeakerObligations(args string, state *ingesti
 	}
 	idsList += "]"
 
-	// Direct graph traversal: find all unclarified Task/Event nodes connected to these speakers
-	query := fmt.Sprintf(`
-		MATCH (p)-[e]-(t)
-		WHERE p.id IN %s
-		  AND t.needs_clarification = true
-		RETURN t.id, label(t), t.content, t.clarification_basis, label(e)
-	`, idsList)
-
-	res, err := o.DBConn.Query(query)
-	if err != nil {
-		log.Printf("   \033[33m[WARNING]\033[0m query_speaker_obligations query failed: %v. Proceeding without obligations context.", err)
-		return "{}", nil
-	}
-
+	// Direct graph traversal: find all unclarified Task/Event nodes and Circle memberships connected to these speakers.
+	// NOTE: Circle memberships are intentionally returned here even under Layer 1 (Mention Capture) rules,
+	// because the agent needs this visibility to link to existing Circles per Rule 13's corroboration path.
+	// We query per-speaker because LadybugDB does not reliably return p.id as a 6th column.
 	type obligation struct {
-		NodeID             string `json:"node_id"`
-		NodeType           string `json:"node_type"`
-		Content            string `json:"content"`
-		ClarificationBasis string `json:"clarification_basis"`
-		EdgeType           string `json:"edge_type"`
+		NodeID             string   `json:"node_id"`
+		NodeType           string   `json:"node_type"`
+		Content            string   `json:"content"`
+		ClarificationBasis string   `json:"clarification_basis"`
+		EdgeType           string   `json:"edge_type"`
+		ConnectedSpeakers  []string `json:"connected_speakers"`
 	}
 
-	var obligations []obligation
-	seen := make(map[string]bool)
+	var obligations []*obligation
+	nodeMap := make(map[string]*obligation)
 
-	for res.HasNext() {
-		tuple := res.GetNext()
-		nodeID, _ := tuple[0].(string)
-		nodeType, _ := tuple[1].(string)
-		content, _ := tuple[2].(string)
-		clarBasis, _ := tuple[3].(string)
-		edgeType, _ := tuple[4].(string)
+	for _, spkID := range speakerIDs {
+		query := fmt.Sprintf(`
+			MATCH (p)-[e]-(t)
+			WHERE p.id = '%s'
+			  AND (t.needs_clarification = true OR (label(t) = 'Circle' AND label(e) = 'MEMBER_OF'))
+			RETURN t.id, label(t), t.content, t.clarification_basis, label(e)
+		`, escapeCypher(spkID))
 
-		if !seen[nodeID] {
-			seen[nodeID] = true
-			obligations = append(obligations, obligation{
-				NodeID:             nodeID,
-				NodeType:           nodeType,
-				Content:            content,
-				ClarificationBasis: clarBasis,
-				EdgeType:           edgeType,
-			})
-
-			// Register these nodes as valid for UPDATE_NODE
-			state.ValidToolNodeIDs[nodeID] = true
-			state.ValidToolNodeTypes[nodeID] = nodeType
-			state.ValidToolNodeContent[nodeID] = content
+		res, err := o.DBConn.Query(query)
+		if err != nil {
+			log.Printf("   \033[33m[WARNING]\033[0m query_speaker_obligations query failed for %s: %v. Skipping.", spkID, err)
+			continue
 		}
+
+		for res.HasNext() {
+			tuple := res.GetNext()
+			nodeID, _ := tuple[0].(string)
+			nodeType, _ := tuple[1].(string)
+			content, _ := tuple[2].(string)
+			clarBasis, _ := tuple[3].(string)
+			edgeType, _ := tuple[4].(string)
+
+			if existing, ok := nodeMap[nodeID]; ok {
+				found := false
+				for _, s := range existing.ConnectedSpeakers {
+					if s == spkID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					existing.ConnectedSpeakers = append(existing.ConnectedSpeakers, spkID)
+				}
+			} else {
+				ob := &obligation{
+					NodeID:             nodeID,
+					NodeType:           nodeType,
+					Content:            content,
+					ClarificationBasis: clarBasis,
+					EdgeType:           edgeType,
+					ConnectedSpeakers:  []string{spkID},
+				}
+				obligations = append(obligations, ob)
+				nodeMap[nodeID] = ob
+
+				// Register these nodes as valid for UPDATE_NODE
+				state.ValidToolNodeIDs[nodeID] = true
+				state.ValidToolNodeTypes[nodeID] = nodeType
+				state.ValidToolNodeContent[nodeID] = content
+			}
+		}
+		res.Close()
 	}
-	res.Close()
 
 	log.Printf("\033[33m▶ [AGENT ACTION]\033[0m Called query_speaker_obligations for %d speakers. Found %d unclarified nodes.", len(speakerIDs), len(obligations))
 	for _, ob := range obligations {
@@ -378,6 +397,10 @@ func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState)
 				if op == "CREATE_NODE" {
 					nodeID, _ := mItem["node_id"].(string)
 					nodeType, _ := mItem["node_type"].(string)
+
+					if nodeType == "Circle" {
+						return "", fmt.Errorf("ERROR: You are attempting to CREATE_NODE for a Circle. Inline Circle creation is currently STRICTLY FORBIDDEN (see skill_commit.md Rule 15). You MUST capture the reference in the group_mentions array of the relevant Task/Event instead.")
+					}
 
 					var ragQuery string
 					var contentStr string

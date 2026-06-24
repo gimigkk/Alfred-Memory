@@ -110,8 +110,7 @@ Not just a smart notes app. Alfred is closer to a personal epistemics engine - s
 ┌─────────────────────────────────────────────────────────────┐
 │                     MEMORY VAULT                            │
 │   LadybugDB (C++ embedded graph DB via go-ladybug)          │
-│   Core node types: Person, Event, Task, Insight,            │
-│   ConversationBlock, Circle                                 │
+│   Core node types: Person, Event, Task, Insight, Circle     │
 └────────────────────────────┬────────────────────────────────┘
                              │
                Tool-callable memory interface
@@ -202,7 +201,7 @@ The conversation block is the **fundamental unit of processing** - analogous to 
 - **Committed:** A fully sealed block ready for LLM extraction.
 - **Abandoned:** A block that was interrupted and never naturally closed. Defaulted after a max-age threshold. On Day 30, any open block reaching the purge window gets a final LLM sweep before raw deletion (see Section 10).
 
-Blocks are strictly **per-chat**. `chat_id` on ConversationBlock is the enforced boundary. Messages from different group chats never share a block.
+Blocks are strictly **per-chat**. The source `chat_id` is the enforced boundary. Messages from different group chats never share a block. Note: Conversation Blocks are purely transient memory queues; they do *not* become nodes in the graph (replaced by node-level `verbatim` and `evidence_refs`).
 
 ---
 
@@ -296,6 +295,7 @@ CREATE NODE TABLE Event (
     content STRING,                 -- Alfred's narrative of current state, written in Indonesian. Must acknowledge prior state if overwriting.
     history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
     verbatim STRING,                -- Exact quote referencing the event (nullable)
+    group_mentions STRING,          -- JSON Array of group mentions captured in this event
     event_date TIMESTAMP,           -- Nullable if date unconfirmed
     status STRING,                  -- "planned" | "active" | "completed" | "cancelled" | "stale"
     created_at TIMESTAMP,
@@ -311,6 +311,7 @@ CREATE NODE TABLE Task (
     content STRING,                 -- Current state: what, who, why. Must acknowledge prior state if overwriting.
     history STRING[],               -- Past content values, newest first. Format: "YYYY-MM-DD HH:MM - [narrative]"
     verbatim STRING,                -- Exact source text if wording itself is meaningful (nullable)
+    group_mentions STRING,          -- JSON Array of group mentions captured in this task
     due_date TIMESTAMP,             -- Nullable
     priority STRING,                -- "high" | "medium" | "low"
     status STRING,                  -- "active" | "completed" | "abandoned" | "stale"
@@ -341,7 +342,9 @@ CREATE NODE TABLE Insight (
 -- 6. Circle: A named group of people with shared context
 -- Replaces the need for a separate Organization node type.
 -- "BPH IEEE", "Divisi C&M", a manager's subordinates - all Circles.
--- Speaker-scoped aliases ("anak gua") are resolved by the agent via vault context, not schema.
+-- CRITICAL NOTE: The ingestion LLM is mechanically forbidden from creating Circle nodes directly.
+-- Instead, it captures organizational references inside the `group_mentions` JSON array on Task and Event nodes.
+-- A Layer 2 "Promoter" batch job asynchronously clusters these mentions and creates permanent Circle nodes.
 CREATE NODE TABLE Circle (
     id STRING,
     name STRING,                    -- Canonical group name
@@ -358,23 +361,31 @@ CREATE NODE TABLE Circle (
 ### Relationship Schema (LadybugDB DDL)
 
 ```sql
--- Person participated in an Event. Role captures their function (nullable).
--- Grounded in data: Rafid had "sambutan" role at SoTQ - participation alone is insufficient.
-CREATE REL TABLE PARTICIPANT_IN (
-    FROM Person TO Event,
-    role STRING,                    -- "sambutan" | "peserta" | "panitia" | "timekeeper" | null
-    evidence_refs STRING            -- Serialized JSON array of EvidenceRef structs
-);
-
 -- Task is assigned to a Person (the doer)
 CREATE REL TABLE ASSIGNED_TO (
-    FROM Task TO Person,
+    FROM Person TO Task,
     evidence_refs STRING
 );
 
--- Task was requested by a Person (the requester, may differ from assignee)
-CREATE REL TABLE REQUESTED_BY (
-    FROM Task TO Person,
+-- Person is mentioned in a Task or Event (passive participant or subject)
+CREATE REL TABLE MENTIONED_IN (
+    FROM Person TO Task,
+    FROM Person TO Event,
+    evidence_refs STRING
+);
+
+-- Person has a titled role in an Event
+CREATE REL TABLE HAS_ROLE (
+    FROM Person TO Event,
+    evidence_refs STRING
+);
+
+-- Person belongs to a Circle, with an optional role
+-- Role is what enables speaker-scoped alias resolution ("anak gua" → kadiv's subordinates)
+CREATE REL TABLE MEMBER_OF (
+    FROM Person TO Circle,
+    role STRING,                    -- "kadiv" | "manager" | "staff" | null
+    since TIMESTAMP,
     evidence_refs STRING
 );
 
@@ -392,22 +403,16 @@ CREATE REL TABLE DIR_TOWARDS (
     evidence_refs STRING
 );
 
--- Causal relationship: one node directly caused another
--- Grounded in data: SoTQ Event caused multiple Tasks; metkuan deadline caused urgency Tasks
-CREATE REL TABLE CAUSED_BY (
-    FROM Task TO Event,             -- Task arose from an Event
-    FROM Task TO Task,              -- Task arose from another Task (explicit only, not inferred)
-    FROM Event TO Event,            -- Event caused another Event (e.g. cancellation → reschedule)
-    created_at TIMESTAMP,
-    evidence_refs STRING
-);
 
--- Insight is supported by observed evidence
--- An Insight's confidence is only as good as its evidence chain
-CREATE REL TABLE EVIDENCED_BY (
-    FROM Insight TO Task,           -- Insight supported by a Task observation
-    FROM Insight TO Event,          -- Insight supported by an Event observation
-    observed_at TIMESTAMP,
+-- Universal generic link for causal relationships (replaces CAUSED_BY and EVIDENCED_BY)
+CREATE REL TABLE LINKS_TO (
+    FROM Task TO Event,
+    FROM Task TO Insight,
+    FROM Task TO Task,
+    FROM Event TO Insight,
+    FROM Event TO Event,
+    FROM Insight TO Insight,
+    context STRING,
     evidence_refs STRING
 );
 
@@ -425,15 +430,6 @@ CREATE REL TABLE KNOWS (
     FROM Person TO Person,
     descriptor STRING,              -- "teman dekat" | "rekan" | "senior" | "junior" | "kenalan"
     context STRING,                 -- Where this relationship exists
-    since TIMESTAMP,
-    evidence_refs STRING
-);
-
--- Person belongs to a Circle, with an optional role
--- Role is what enables speaker-scoped alias resolution ("anak gua" → kadiv's subordinates)
-CREATE REL TABLE MEMBER_OF (
-    FROM Person TO Circle,
-    role STRING,                    -- "kadiv" | "manager" | "staff" | null
     since TIMESTAMP,
     evidence_refs STRING
 );
@@ -751,7 +747,7 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 36 | **PARTICIPANT_IN carries role STRING** | Participation alone is insufficient — Rafid's "sambutan" role at SoTQ is meaningfully different from general attendance. Nullable for regular participants. | Jun 13, 2026 |
 | 37 | **KNOWS REL for Person→Person** | Structural descriptor ("teman dekat", "senior") and context ("IEEE BPH"). Behavioral dynamics live in Insights, not on this edge. | Jun 13, 2026 |
 | 38 | **Event status enum replaces is_confirmed BOOLEAN** | Boolean is too coarse. Status: `"planned" \| "active" \| "completed" \| "cancelled" \| "stale"`. | Jun 13, 2026 |
-| 39 | **ConversationBlock stores raw_transcript** | Raw message log with WAHA quote payloads preserved for correct reply-chain interpretation. `content` holds Alfred's post-extraction summary. | Jun 13, 2026 |
+| 39 | **Raw Transcripts as Ephemeral** | Raw message logs are no longer stored as ConversationBlock nodes to avoid graph pollution. `content` holds Alfred's post-extraction summary. | Jun 13, 2026 |
 | 40 | **Circle node type added** | Named groups with shared context. Replaces separate Organization node. Speaker-scoped aliases ("anak gua") resolved by agent via MEMBER_OF role, not schema encoding. | Jun 13, 2026 |
 | 41 | **verbatim STRING on Task and Insight** | Exact wording stored only when paraphrase would lose meaning (explicit commitments, certificate numbers, strong direct statements). Nullable. | Jun 13, 2026 |
 | 42 | **MEMBER_OF REL added** | Person→Circle with role STRING. Role ("kadiv", "staff") enables speaker-scoped alias resolution by the agent. | Jun 13, 2026 |
@@ -783,7 +779,8 @@ The user could indirectly prompt-engineer Alfred's extraction criteria by tellin
 | 68 | **In-Memory Mock Database Pivot** | Replaced the actual C++ LadybugDB with a pure in-memory Go mock (`internal/ladybug/mock.go`) to bypass severe CGO compilation blocks during Phase 1 pipeline testing. No on-disk persistence until CGO issues are resolved. | Jun 23, 2026 |
 | 69 | **Obligations Interceptor Gate** | Added `query_speaker_obligations` as a mandatory Go-side gate before schema request. Forces the agent to query the graph for existing `needs_clarification` nodes to perform temporal updates rather than creating duplicate nodes. | Jun 23, 2026 |
 | 70 | **Documentation Suite Redesign** | Core bibles (`Alfred.md`, `Phase_1_Plan.md`) are stripped of low-level mechanics, pushing detailed architecture and flow documentation into `docs/architecture/`. `.geminirules` updated to mandate reading these before coding. | Jun 23, 2026 |
-
+| 71 | **Layer 1 Mention Capture (Circle Deferral)** | Inline `Circle` node creation was identified as highly brittle and hallucination-prone. Circle creation is now deferred to a Layer 2 batch job. The ingestion agent captures structural mentions purely as data using the `group_mentions` property on `Task`/`Event`. | Jun 24, 2026 |
+| 72 | **Mechanical Schema Guardrails** | The Go Orchestrator strictly enforces invariant structures: e.g., hard-rejecting `CREATE_NODE` for `Circle`, ensuring properties maps are evaluated accurately. This acts as an absolute backstop against LLM reasoning decay. | Jun 24, 2026 |
 ---
 
 ## 16. Documentation Suite Index
