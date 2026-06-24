@@ -138,4 +138,9 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 ### Sub-Phase 1.6: The PWA Chat Interface (Frontend)
 - [ ] Update `public/index.html` to include a chat overlay alongside the Graph viewer.
 - [ ] Implement HTTP fetching, message rendering, and loading state UI in `public/app.js`.
-- [ ] Apply high-fidelity, dynamic CSS styling (glassmorphism, smooth transitions) to ensure a premium user experience.
+
+### Sub-Phase 1.7: Layer 2 Mention Promotion (Cron Job)
+- [ ] Create a standalone Go routine or separate binary that runs periodically.
+- [ ] Scan `Task` and `Event` nodes for unpromoted `group_mentions` payloads.
+- [ ] Call the Gemini API with a specialized clustering prompt to group aliases (e.g., "divisi logistik", "div logistik") into a single canonical `Circle` node.
+- [ ] Execute `CREATE_NODE` for the new `Circle` and link the participants via `MEMBER_OF` edges.
