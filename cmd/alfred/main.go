@@ -29,11 +29,10 @@ func main() {
 	// 2. Initialize DBs
 	dbDir := "./.lbug"
 	
-	// If Ladybug is being recreated (i.e. wiped for testing), wipe SQLite too to keep them in sync
-	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-		log.Println("Fresh LadybugDB detected. Wiping stale SQLite reminders...")
-		_ = os.Remove("./reminders.db")
-	}
+	// Since Ladybug is currently an in-memory mock that resets on every restart,
+	// we must always wipe SQLite to keep them in sync.
+	log.Println("Wiping SQLite reminders to sync with in-memory LadybugDB...")
+	_ = os.Remove("./reminders.db")
 	
 	_ = os.MkdirAll(dbDir, 0755)
 
