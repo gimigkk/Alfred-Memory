@@ -71,10 +71,10 @@ You must format your final output strictly according to this abstract schema to 
 
 ```json
 {
-  "thought": "[Your mandatory CLARITY, EVENT, DUAL-LINK, ROLE, and UPDATE checks here]",
+  "thought": "[1. Provide 2-3 sentences of deep reasoning analyzing the transcript's overall context, speaker intents, and potential ambiguities. 2. Then provide your mandatory CLARITY, EVENT, DUAL-LINK, ROLE, and UPDATE checks here.]",
   "tool_name": "commit_mutations",
   "arguments": {
-    "thought": "[String: MANDATORY. Write out your ROLE CHECK, DUAL-LINK CHECK, EVENT CHECK, CIRCLE CHECK, CLARITY CHECK, and UPDATE CHECK here before committing.]",
+    "thought": "[String: MANDATORY. 1. Paragraph of deep reasoning analyzing the context. 2. Your ROLE CHECK, DUAL-LINK CHECK, EVENT CHECK, CIRCLE CHECK, CLARITY CHECK, and UPDATE CHECK here before committing.]",
     "mutations": [
       {
         "operation": "CREATE_NODE",
