@@ -28,6 +28,13 @@ func main() {
 
 	// 2. Initialize DBs
 	dbDir := "./.lbug"
+	
+	// If Ladybug is being recreated (i.e. wiped for testing), wipe SQLite too to keep them in sync
+	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+		log.Println("Fresh LadybugDB detected. Wiping stale SQLite reminders...")
+		_ = os.Remove("./reminders.db")
+	}
+	
 	_ = os.MkdirAll(dbDir, 0755)
 
 	lbugClient, err := db.NewClient(dbDir)
