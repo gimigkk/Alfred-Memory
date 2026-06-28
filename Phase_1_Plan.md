@@ -129,15 +129,16 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - `[x]` Add an intercept in the orchestrator loop: if a `Task` mutation is committed and contains a `due_date`, write it to `reminders.db`.
 - `[x]` Execute `INSERT OR REPLACE INTO reminders (id, node_id, deadline, is_sent, message)`.
 
-### Sub-Phase 1.5: The Chat Agent (Backend)
-- [ ] Create an `/api/chat` POST endpoint in `cmd/alfred/main.go`.
+### Sub-Phase 1.5: PWA Interface Initialization (Frontend)
+- [ ] Initialize a modern Vite + React web app in the `frontend/` directory.
+- [ ] Establish the design system (CSS variables, glassmorphism, dynamic animations).
+- [ ] Build the core Chat Window UI and the Agent Observability (Thinking) view.
+
+### Sub-Phase 1.6: The Chat Agent & API (Backend)
+- [ ] Create an `/api/chat` POST endpoint in `cmd/alfred/main.go` with CORS support for the Vite dev server.
 - [ ] Build the `RunChatAgent()` loop in `internal/agent/chat.go`.
 - [ ] Implement the `query_node_history(node_id)` tool to fetch the `history STRING[]` array natively.
-- [ ] Equip the Chat Agent with its full toolkit and ensure the prompt composition logic stitches `core_persona` + `core_schema` + `skill_chat`.
-
-### Sub-Phase 1.6: The PWA Chat Interface (Frontend)
-- [ ] Update `public/index.html` to include a chat overlay alongside the Graph viewer.
-- [ ] Implement HTTP fetching, message rendering, and loading state UI in `public/app.js`.
+- [ ] Connect the React frontend to the `/api/chat` backend for End-to-End natural language querying.
 
 ### Sub-Phase 1.7: Layer 2 Mention Promotion (Cron Job)
 - [ ] Create a standalone Go routine or separate binary that runs periodically.
