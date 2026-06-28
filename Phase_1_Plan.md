@@ -124,10 +124,10 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - `[x]` Format the timestamp and prepend the old content to the `history STRING[]` array. (Superseded by Atomic Cypher)
 - `[x]` Execute the final `SET n.content = $new, n.history = $history` Cypher query. (Implemented via Atomic Cypher in `execution.go`)
 
-### Sub-Phase 1.4: SQLite Reminders Integration
-- [ ] Pass the SQLite `*sql.DB` connection into the `Orchestrator` struct during initialization.
-- [ ] Add an intercept in the orchestrator loop: if a `Task` mutation is committed and contains a `due_date`, write it to `reminders.db`.
-- [ ] Execute `INSERT OR REPLACE INTO reminders (id, node_id, deadline, is_sent, message)`.
+### Sub-Phase 1.4: SQLite Reminders Integration (COMPLETED)
+- `[x]` Pass the SQLite `*sql.DB` connection into the `Orchestrator` struct during initialization.
+- `[x]` Add an intercept in the orchestrator loop: if a `Task` mutation is committed and contains a `due_date`, write it to `reminders.db`.
+- `[x]` Execute `INSERT OR REPLACE INTO reminders (id, node_id, deadline, is_sent, message)`.
 
 ### Sub-Phase 1.5: The Chat Agent (Backend)
 - [ ] Create an `/api/chat` POST endpoint in `cmd/alfred/main.go`.
