@@ -185,3 +185,143 @@ func init() {
 func GetIngestionTools() []llm.ToolDef {
 	return ingestionTools
 }
+
+func GetChatTools() []llm.ToolDef {
+	return []llm.ToolDef{
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
+				Name:        "query_rag",
+				Description: "Search the knowledge vault for relevant nodes using semantic search.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{
+							"type": "string",
+						},
+						"top_k": map[string]any{
+							"type": "integer",
+						},
+						"hops": map[string]any{
+							"type": "integer",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
+				Name:        "query_node_history",
+				Description: "Fetch the historical changelog for a specific node to understand how its state evolved over time.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"node_id": map[string]any{
+							"type": "string",
+						},
+					},
+					"required": []string{"node_id"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
+				Name:        "ask_user_for_hint",
+				Description: "Yield execution and ask the user for a clarifying question if the graph context is completely ambiguous.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"question": map[string]any{
+							"type": "string",
+						},
+					},
+					"required": []string{"question"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
+				Name:        "commit_chat_mutations",
+				Description: "Commit graph mutations to the vault. This is all-or-nothing. YOU MUST CALL query_rag FIRST to resolve any target person node IDs before using add_edges.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"thought": map[string]any{
+							"type":        "string",
+							"description": "MANDATORY: You MUST write your MANDATORY SYSTEM CHECKS here before committing.",
+						},
+						"mutations": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"operation": map[string]any{"type": "string", "enum": []string{"CREATE_NODE", "UPDATE_NODE", "DELETE_NODE"}},
+									"node_type": map[string]any{"type": "string"},
+									"node_id":   map[string]any{"type": "string"},
+									"properties": map[string]any{
+										"type": "object",
+										"properties": map[string]any{
+											"title": map[string]any{"type": "string"},
+											"content": map[string]any{"type": "string"},
+											"status": map[string]any{"type": "string"},
+											"verbatim": map[string]any{"type": "string"},
+											"needs_clarification": map[string]any{"type": "boolean"},
+											"clarification_basis": map[string]any{"type": "string"},
+										},
+									},
+									"add_edges": map[string]any{
+										"type": "array",
+										"items": map[string]any{
+											"type": "object",
+											"properties": map[string]any{
+												"rel_type":       map[string]any{"type": "string"},
+												"target_node_id": map[string]any{"type": "string"},
+											},
+											"required": []string{"rel_type", "target_node_id"},
+										},
+									},
+								},
+								"required": []string{"operation", "node_id"},
+							},
+						},
+					},
+					"required": []string{"thought", "mutations"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
+				Name:        "upsert_reminder",
+				Description: "Insert or update a deadline reminder.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"message":  map[string]any{"type": "string"},
+						"deadline": map[string]any{"type": "string"},
+						"status":   map[string]any{"type": "string"},
+						"task_ref": map[string]any{"type": "string"},
+					},
+					"required": []string{"message", "deadline", "status"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: llm.FunctionDef{
+				Name:        "check_reminders",
+				Description: "Check for pending reminders associated with a task.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"task_ref": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+}

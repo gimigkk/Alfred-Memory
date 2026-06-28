@@ -23,28 +23,6 @@ func tokenize(s string) []string {
 	return tokens
 }
 
-func isSubslice(sub, main []string) bool {
-	if len(sub) == 0 {
-		return false
-	}
-	if len(sub) > len(main) {
-		return false
-	}
-	for i := 0; i <= len(main)-len(sub); i++ {
-		match := true
-		for j := 0; j < len(sub); j++ {
-			if main[i+j] != sub[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
-}
-
 func isTokenSubset(sub, main []string) bool {
 	if len(sub) == 0 {
 		return false

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/gimigkk/Alfred-Memory/internal/rag"
 )
@@ -713,4 +714,256 @@ func (o *Orchestrator) handleCommitMutations(args string, state *ingestionState)
 	}
 
 	return "OK", nil
+}
+
+// ---------------------------------------------------------
+// CHAT AGENT TOOL HANDLERS
+// ---------------------------------------------------------
+
+func (o *Orchestrator) handleChatQueryRag(args string) (string, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return "", err
+	}
+	query, _ := parsed["query"].(string)
+	if query == "" {
+		return "", fmt.Errorf("ERROR: query is required")
+	}
+
+	topK := 3
+	if k, ok := parsed["top_k"].(float64); ok {
+		topK = int(k)
+	}
+	hops := 60
+	if h, ok := parsed["hops"].(float64); ok {
+		hops = int(h)
+	}
+
+	vecs, err := o.Embed.GetVectors([]string{query})
+	if err != nil {
+		return "", fmt.Errorf("embedding failed: %w", err)
+	}
+
+	sub, err := rag.QueryRAG(o.DBConn, vecs[0], query, topK, hops)
+	if err != nil {
+		return "", err
+	}
+
+	subBytes, _ := json.Marshal(sub)
+	return string(subBytes), nil
+}
+
+func (o *Orchestrator) handleQueryNodeHistory(args string) (string, error) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return "", err
+	}
+	nodeID, _ := parsed["node_id"].(string)
+	if nodeID == "" {
+		return "", fmt.Errorf("node_id is required")
+	}
+
+	res, err := o.DBConn.Query(fmt.Sprintf("MATCH (n) WHERE n.id = '%s' RETURN n.history", escapeCypher(nodeID)))
+	if err != nil {
+		return "", err
+	}
+	defer res.Close()
+
+	if res.HasNext() {
+		row := res.GetNext()
+		if len(row) > 0 && row[0] != nil {
+			b, _ := json.Marshal(row[0])
+			return string(b), nil
+		}
+	}
+
+	return "[]", nil
+}
+
+func (o *Orchestrator) handleAskUserForHint(args string) (string, error) {
+	return args, nil // YIELD_TO_USER is handled by executor
+}
+
+func (o *Orchestrator) handleCommitChatMutations(args string) (string, error) {
+	var parsed struct {
+		Thought   string `json:"thought"`
+		Mutations []struct {
+			Operation  string                 `json:"operation"`
+			NodeType   string                 `json:"node_type"`
+			NodeID     string                 `json:"node_id"`
+			Properties map[string]interface{} `json:"properties"`
+			AddEdges   []struct {
+				RelType      string `json:"rel_type"`
+				TargetNodeID string `json:"target_node_id"`
+			} `json:"add_edges"`
+		} `json:"mutations"`
+	}
+
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return "", err
+	}
+
+	log.Printf("\n   \033[90m[CHAT COMMIT THOUGHT]\033[0m %s\n", parsed.Thought)
+
+	var successLog []string
+	idMap := make(map[string]string)
+
+	// Phase 1: Re-map temporary IDs to UUIDs
+	for i := range parsed.Mutations {
+		m := &parsed.Mutations[i]
+		if m.Operation == "CREATE_NODE" && strings.HasPrefix(m.NodeID, "temp_") {
+			readablePart := strings.TrimPrefix(m.NodeID, "temp_")
+			shortHash := fmt.Sprintf("%x", time.Now().UnixNano()+int64(i))
+			if len(shortHash) > 6 {
+				shortHash = shortHash[len(shortHash)-6:]
+			}
+			newID := fmt.Sprintf("%s_%s", readablePart, shortHash)
+			idMap[m.NodeID] = newID
+			m.NodeID = newID
+		}
+	}
+
+	// Update edges with mapped IDs
+	for i := range parsed.Mutations {
+		for j, edge := range parsed.Mutations[i].AddEdges {
+			if mappedID, exists := idMap[edge.TargetNodeID]; exists {
+				parsed.Mutations[i].AddEdges[j].TargetNodeID = mappedID
+			}
+		}
+	}
+
+	// Topological Guardrail (prevent orphaned Tasks/Events)
+	for _, m := range parsed.Mutations {
+		if m.Operation == "CREATE_NODE" && (m.NodeType == "Task" || m.NodeType == "Event") {
+			hasLink := false
+			// Check if this node has outgoing edges
+			if len(m.AddEdges) > 0 {
+				hasLink = true
+			}
+			// Check if any other node has incoming edges to this node
+			for _, otherM := range parsed.Mutations {
+				for _, edge := range otherM.AddEdges {
+					if edge.TargetNodeID == m.NodeID {
+						hasLink = true
+					}
+				}
+			}
+			if !hasLink {
+				return "", fmt.Errorf("ERROR: You attempted to CREATE_NODE for %s '%s', but you did not link it to any Person using add_edges. You MUST NOT create orphaned nodes. If it belongs to the user, use the injected USER IDENTITY node ID.", m.NodeType, m.NodeID)
+			}
+		}
+	}
+
+	// Phase 2: Execute Mutations sequentially
+	for _, m := range parsed.Mutations {
+		mut := Mutation{
+			Operation:  m.Operation,
+			NodeID:     m.NodeID,
+			NodeType:   m.NodeType,
+			Properties: m.Properties,
+		}
+
+		var query string
+		if m.Operation == "CREATE_NODE" {
+			query = buildCreateCypher(mut)
+		} else if m.Operation == "UPDATE_NODE" || m.Operation == "DELETE_NODE" {
+			// Verify node exists before updating or deleting
+			checkQ := fmt.Sprintf("MATCH (n) WHERE n.id = '%s' RETURN n.id", escapeCypher(m.NodeID))
+			res, err := o.DBConn.Query(checkQ)
+			if err != nil || res == nil || !res.HasNext() {
+				return "", fmt.Errorf("ERROR: You attempted to %s for '%s', but this node does not exist in the vault. If this is a new entity, use CREATE_NODE instead. If you meant to update an existing node, ensure you queried its correct UUID first.", m.Operation, m.NodeID)
+			}
+			if res != nil {
+				res.Close()
+			}
+			
+			if m.Operation == "UPDATE_NODE" {
+				query = buildUpdateCypher(mut)
+			} else {
+				query = fmt.Sprintf("MATCH (n) WHERE n.id = '%s' DETACH DELETE n", escapeCypher(m.NodeID))
+			}
+		}
+
+		if query != "" {
+			_, err := o.DBConn.Query(query)
+			if err != nil {
+				return "", fmt.Errorf("failed to execute %s on %s: %v", m.Operation, m.NodeID, err)
+			}
+			successLog = append(successLog, fmt.Sprintf("%s %s", m.Operation, m.NodeID))
+		}
+
+		// Phase 3: Execute Edges
+		for _, edge := range m.AddEdges {
+			if edge.RelType != "" && edge.TargetNodeID != "" {
+				edgeQuery := fmt.Sprintf("MATCH (a), (b) WHERE a.id = '%s' AND b.id = '%s' CREATE (a)-[:%s]->(b)", m.NodeID, edge.TargetNodeID, escapeCypher(edge.RelType))
+				_, err := o.DBConn.Query(edgeQuery)
+				if err != nil {
+					return "", fmt.Errorf("failed to create edge %s to %s: %v", edge.RelType, edge.TargetNodeID, err)
+				}
+				successLog = append(successLog, fmt.Sprintf("ADD_EDGE %s -> %s", m.NodeID, edge.TargetNodeID))
+			}
+		}
+	}
+
+	return fmt.Sprintf(`{"status": "success", "mutations": [%s]}`, strings.Join(successLog, ", ")), nil
+}
+
+func (o *Orchestrator) handleUpsertReminder(args string) (string, error) {
+	if o.SQLiteDB == nil {
+		return "", fmt.Errorf("SQLite DB not initialized")
+	}
+	var parsed struct {
+		NodeID   string `json:"node_id"`
+		Deadline string `json:"deadline"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(args), &parsed); err != nil {
+		return "", err
+	}
+	if parsed.NodeID == "" || parsed.Deadline == "" {
+		return "", fmt.Errorf("node_id and deadline are required")
+	}
+
+	remID := "rem_" + parsed.NodeID
+	_, err := o.SQLiteDB.Exec(`
+		INSERT INTO Reminders (id, node_id, deadline, is_sent, message) 
+		VALUES (?, ?, ?, ?, ?) 
+		ON CONFLICT(id) DO UPDATE SET 
+		deadline=excluded.deadline, 
+		message=excluded.message,
+		is_sent=excluded.is_sent
+	`, remID, parsed.NodeID, parsed.Deadline, false, parsed.Message)
+
+	if err != nil {
+		return "", err
+	}
+	return `{"status": "success", "message": "Reminder upserted successfully"}`, nil
+}
+
+func (o *Orchestrator) handleCheckReminders(_ string) (string, error) {
+	if o.SQLiteDB == nil {
+		return "[]", nil
+	}
+	rows, err := o.SQLiteDB.Query("SELECT id, node_id, deadline, is_sent, message FROM Reminders")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var rems []map[string]interface{}
+	for rows.Next() {
+		var id, nodeID, deadline, msg string
+		var isSent bool
+		if err := rows.Scan(&id, &nodeID, &deadline, &isSent, &msg); err == nil {
+			rems = append(rems, map[string]interface{}{
+				"id": id,
+				"node_id": nodeID,
+				"deadline": deadline,
+				"is_sent": isSent,
+				"message": msg,
+			})
+		}
+	}
+	b, _ := json.Marshal(rems)
+	return string(b), nil
 }

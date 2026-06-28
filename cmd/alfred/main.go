@@ -206,6 +206,40 @@ func main() {
 		json.NewEncoder(w).Encode(reminders)
 	})
 
+	http.HandleFunc("/api/chat/stream", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var reqBody struct {
+			Message string        `json:"message"`
+			History []llm.Message `json:"history"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		emitEvent := func(event agent.ChatEvent) {
+			data, _ := json.Marshal(event)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		orchestrator.RunChatAgent(reqBody.Message, reqBody.History, emitEvent)
+	})
+
 	http.Handle("/", http.FileServer(http.Dir("./public")))
 
 	port := "8080"

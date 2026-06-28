@@ -45,15 +45,16 @@ func (o *Orchestrator) RunAgenticIngestion(runID string, transcript string, dryR
 	// PHASE 2: TOOL DELEGATION
 	// ==========================================
 	executor := func(name, args string) (string, error) {
-		if name == "query_rag" {
+		switch name {
+		case "query_rag":
 			return o.handleQueryRag(args, state)
-		} else if name == "extract_transcript_manifest" {
+		case "extract_transcript_manifest":
 			return o.handleExtractManifest(args, transcript, state)
-		} else if name == "declare_new_speaker" {
+		case "declare_new_speaker":
 			return o.handleDeclareNewSpeaker(args, state)
-		} else if name == "query_speaker_obligations" {
+		case "query_speaker_obligations":
 			return o.handleQuerySpeakerObligations(args, state)
-		} else if name == "commit_mutations" {
+		case "commit_mutations":
 			return o.handleCommitMutations(args, state)
 		}
 		return "", fmt.Errorf("unknown tool: %s", name)

@@ -129,13 +129,18 @@ To maintain quality across this massive architectural shift, Phase 1 execution i
 - `[x]` Add an intercept in the orchestrator loop: if a `Task` mutation is committed and contains a `due_date`, write it to `reminders.db`.
 - `[x]` Execute `INSERT OR REPLACE INTO reminders (id, node_id, deadline, is_sent, message)`.
 
-### Sub-Phase 1.5: The Chat Agent (Backend & Dev UI)
-- [ ] Create an `/api/chat` POST endpoint in `cmd/alfred/main.go`.
-- [ ] Build the `RunChatAgent()` loop in `internal/agent/chat.go`.
-- [ ] Implement the `query_node_history(node_id)` tool to fetch the `history STRING[]` array natively.
-- [ ] Equip the Chat Agent with its full toolkit and ensure the prompt composition logic stitches `core_persona` + `core_schema` + `skill_chat`.
-- [ ] Update `public/index.html` to include a mock chat overlay alongside the Graph viewer.
-- [ ] Implement HTTP fetching, message rendering, and loading state UI in `public/app.js` to test the backend API.
+### Sub-Phase 1.5: The Chat Agent (Streaming Backend & Observability UI)
+- [x] Create a `POST /api/chat/stream` endpoint in `cmd/alfred/main.go` that utilizes Server-Sent Events (SSE).
+- [x] Build the `RunChatAgent()` loop in `internal/agent/chat.go` to stream text chunks (thoughts) and tool calls dynamically.
+- [x] Equip the Chat Agent with its full toolkit:
+  - `query_rag`: Search memory vault.
+  - `query_node_history(node_id)`: Fetch history changelog natively.
+  - `ask_user_for_hint(question)`: Yield execution, terminating the loop and prompting the user.
+  - `create_node`, `update_node`, `delete_node`: For mid-chat graph mutations.
+  - `upsert_reminder`, `check_reminders`: For managing SQLite triggers.
+- [x] Ensure prompt composition stitches `core_persona` + `core_schema` + `skill_chat`.
+- [x] Update `public/index.html` and `public/app.js` to connect to the SSE endpoint and parse the JSON stream chunks.
+- [x] Build the Observability UI in the frontend: Collapsible "Agent Process" blocks showing tool calls (e.g., "🛠️ Calling query_rag...") and agent reasoning/thoughts.
 
 ### Sub-Phase 1.7: Layer 2 Mention Promotion (Cron Job)
 - [ ] Create a standalone Go routine or separate binary that runs periodically.

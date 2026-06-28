@@ -31,6 +31,6 @@ func BuildCommitPrompt() string {
 }
 
 // BuildChatPrompt deterministically concatenates the modules for the Chat pipeline
-func BuildChatPrompt() string {
-	return fmt.Sprintf("%s\n\n%s\n\n%s", CorePersona, CoreSchema, SkillChat)
+func BuildChatPrompt(currentTime, ownerID string) string {
+	return fmt.Sprintf("%s\n\n%s\n\n%s\n\n### SYSTEM CLOCK\nThe current system time is: %s\n\n### USER IDENTITY\nThe user you are interacting with has the Node ID: %s. You MUST use this ID when linking their Tasks/Events.", CorePersona, CoreSchema, SkillChat, currentTime, ownerID)
 }

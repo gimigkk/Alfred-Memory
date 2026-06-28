@@ -886,3 +886,161 @@ fetchReminders();
 // Polling interval
 setInterval(fetchGraph, 2000);
 setInterval(fetchReminders, 5000);
+
+// -----------------------------------------------------
+// Chat UI & Observability Layer
+// -----------------------------------------------------
+
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const chatSend = document.getElementById('chat-send');
+let chatHistory = [];
+
+function appendMessage(role, content) {
+    const div = document.createElement('div');
+    div.className = `chat-msg ${role}`;
+    div.innerText = content;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function appendAgentProcess(text) {
+    const div = document.createElement('div');
+    div.className = 'chat-process';
+    div.innerHTML = text;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+}
+
+chatSend.addEventListener('click', async () => {
+    const text = chatInput.value.trim();
+    if (!text) return;
+    
+    chatInput.value = '';
+    appendMessage('user', text);
+
+    const payload = {
+        message: text,
+        history: chatHistory
+    };
+
+    chatHistory.push({ Role: 'user', Content: text });
+
+    const processDiv = appendAgentProcess('<em>Thinking...</em>');
+
+    try {
+        const response = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let currentThoughtDiv = null;
+        
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            
+            let boundary = buffer.indexOf('\n\n');
+            while (boundary !== -1) {
+                const event = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                boundary = buffer.indexOf('\n\n');
+
+                if (event.startsWith('data: ')) {
+                    const dataStr = event.substring(6);
+                    try {
+                        const data = JSON.parse(dataStr);
+                        
+                        if (data.type === 'thought') {
+                            if (!currentThoughtDiv) {
+                                currentThoughtDiv = document.createElement('div');
+                                currentThoughtDiv.className = 'chat-thought';
+                                currentThoughtDiv.innerHTML = `<details><summary>Thinking</summary><div class="thought-content" style="white-space: pre-wrap; padding: 8px 0; color: #475569;"></div></details>`;
+                                chatMessages.insertBefore(currentThoughtDiv, processDiv);
+                            }
+                            const contentDiv = currentThoughtDiv.querySelector('.thought-content');
+                            contentDiv.innerText += data.content + '\n';
+                        } else if (data.type === 'tool_call') {
+                            let extra = '';
+                            if (data.tool === 'ask_user_for_hint') {
+                                extra = ' (Yielding to user)';
+                            }
+                            
+                            const toolCallDiv = document.createElement('div');
+                            toolCallDiv.className = 'chat-thought';
+                            
+                            let argsHtml = '';
+                            if (data.args) {
+                                try {
+                                    argsHtml = JSON.stringify(data.args, null, 2);
+                                } catch (e) {
+                                    argsHtml = data.args;
+                                }
+                            }
+                            
+                            toolCallDiv.innerHTML = `<details><summary>🛠️ Calling <strong>${escapeHtml(data.tool)}</strong>${extra}</summary><pre class="thought-content" style="white-space: pre-wrap; font-size: 10px; margin: 4px 0 0 0; background: #e2e8f0; padding: 4px; border-radius: 4px;">${escapeHtml(argsHtml)}</pre></details>`;
+                            chatMessages.insertBefore(toolCallDiv, processDiv);
+                            
+                            // Keep a reference if we want to append the result to the same block later
+                            toolCallDiv.dataset.toolName = data.tool;
+                            
+                        } else if (data.type === 'tool_result') {
+                            currentThoughtDiv = null; 
+                            
+                            // Find the last tool call div that matches this tool name
+                            const toolCallDivs = chatMessages.querySelectorAll(`.chat-thought[data-tool-name="${data.tool}"]`);
+                            if (toolCallDivs.length > 0) {
+                                const lastToolCallDiv = toolCallDivs[toolCallDivs.length - 1];
+                                const details = lastToolCallDiv.querySelector('details');
+                                
+                                let resultHtml = '';
+                                if (data.result) {
+                                    try {
+                                        resultHtml = typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2);
+                                    } catch(e) {
+                                        resultHtml = String(data.result);
+                                    }
+                                }
+                                
+                                const resultPre = document.createElement('pre');
+                                resultPre.style.cssText = "white-space: pre-wrap; font-size: 10px; margin: 4px 0 0 0; background: #dcfce7; padding: 4px; border-radius: 4px; border: 1px solid #86efac;";
+                                resultPre.innerText = "Result:\n" + resultHtml;
+                                details.appendChild(resultPre);
+                            }
+
+                            if (['update_node', 'create_node', 'delete_node'].includes(data.tool)) {
+                                fetchGraph();
+                            }
+                        } else if (data.type === 'message') {
+                            processDiv.remove();
+                            appendMessage('agent', data.content);
+                            chatHistory.push({ Role: 'assistant', Content: data.content });
+                        } else if (data.type === 'error') {
+                            processDiv.remove();
+                            appendAgentProcess(`<span style="color:red">Error: ${escapeHtml(data.content)}</span>`);
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse SSE JSON:', e, dataStr);
+                    }
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            }
+        }
+        processDiv.remove();
+    } catch (e) {
+        processDiv.remove();
+        appendAgentProcess(`<span style="color:red">Connection error.</span>`);
+    }
+});
+
+chatInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') chatSend.click();
+});

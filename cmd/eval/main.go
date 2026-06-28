@@ -236,7 +236,7 @@ func main() {
 	}
 
 	// 3. Setup Orchestrator
-	orchestrator := agent.NewOrchestrator(llmRouter, geminiEmbed, conn)
+	orchestrator := agent.NewOrchestrator(llmRouter, geminiEmbed, conn, nil, "")
 
 	// 4. Load Fixtures
 	fixtureDir := "testdata/fixtures/sambutan_001"

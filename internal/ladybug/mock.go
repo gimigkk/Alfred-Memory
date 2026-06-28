@@ -1,6 +1,9 @@
 package ladybug
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type Database struct{}
 type Connection struct{}
@@ -163,11 +166,32 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 		props := parseCypherProps(propsStr)
 
 		id, _ := props["id"].(string)
-		content, _ := props["content"].(string)
-		mockNodes = append(mockNodes, []any{id, nodeType, content, props})
+		
+		var label string
+		if nodeType == "Person" {
+			name, _ := props["name"].(string)
+			aliasesVal := props["aliases"]
+			aliasStr := ""
+			if aliasesArr, ok := aliasesVal.([]any); ok {
+				var strArr []string
+				for _, a := range aliasesArr {
+					strArr = append(strArr, fmt.Sprintf("%v", a))
+				}
+				aliasStr = strings.Join(strArr, ", ")
+			} else if aliasesStr, ok := aliasesVal.(string); ok {
+				aliasStr = aliasesStr
+			}
+			label = fmt.Sprintf("Name: %s, Aliases: %s", name, aliasStr)
+		} else {
+			if content, ok := props["content"].(string); ok {
+				label = content
+			}
+		}
+
+		mockNodes = append(mockNodes, []any{id, nodeType, label, props})
 		rows = [][]any{}
 
-	} else if strings.HasPrefix(query, "MATCH (n) WHERE n.id =") {
+	} else if strings.HasPrefix(query, "MATCH (n) WHERE n.id =") && strings.Contains(query, "SET ") {
 		// SET update
 		id := ""
 		if idStart := strings.Index(query, "n.id = '"); idStart != -1 {
@@ -176,15 +200,6 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 				id = query[idStart+8 : idStart+8+idEnd]
 			}
 		}
-		content := ""
-		if contentStart := strings.Index(query, "n.content = '"); contentStart != -1 {
-			contentEnd := findStringEnd(query[contentStart+13:])
-			if contentEnd != -1 {
-				content = query[contentStart+13 : contentStart+13+contentEnd]
-			}
-		}
-		content = strings.ReplaceAll(content, "\\'", "'")
-		content = strings.ReplaceAll(content, "\\\\", "\\")
 
 		historyPrefix := ""
 		if histStart := strings.Index(query, "n.history = ['"); histStart != -1 {
@@ -193,12 +208,24 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 			}
 		}
 
+		// Use parseCypherProps to parse the SET clause accurately
+		setPropsStr := ""
+		if setStart := strings.Index(query, "SET "); setStart != -1 {
+			setPropsStr = query[setStart+4:]
+			// Convert "n.prop = 'val'" into "prop: 'val'" for parseCypherProps
+			setPropsStr = strings.ReplaceAll(setPropsStr, "n.", "")
+			setPropsStr = strings.ReplaceAll(setPropsStr, " = ", ": ")
+		}
+		
+		newProps := parseCypherProps(setPropsStr)
+
 		for i, n := range mockNodes {
 			if n[0].(string) == id {
 				existingProps, _ := n[3].(map[string]any)
 				if existingProps == nil {
 					existingProps = make(map[string]any)
 				}
+				
 				if historyPrefix != "" {
 					oldContent, _ := existingProps["content"].(string)
 					newHistoryItem := historyPrefix + oldContent
@@ -208,14 +235,56 @@ func (c *Connection) Query(query string) (*QueryResult, error) {
 						existingProps["history"] = []any{newHistoryItem}
 					}
 				}
-				if content != "" {
-					existingProps["content"] = content
-					mockNodes[i][2] = content
+				
+				// Apply all new props
+				for k, v := range newProps {
+					if k != "history" { // skip manual history override
+						existingProps[k] = v
+					}
+				}
+				mockNodes[i][3] = existingProps
+
+				// Rebuild the text representation (mockNodes[i][2])
+				if n[1].(string) == "Person" {
+					name, _ := existingProps["name"].(string)
+					aliasesVal := existingProps["aliases"]
+					aliasStr := ""
+					if aliasesArr, ok := aliasesVal.([]any); ok {
+						var strArr []string
+						for _, a := range aliasesArr {
+							strArr = append(strArr, fmt.Sprintf("%v", a))
+						}
+						aliasStr = strings.Join(strArr, ", ")
+					} else if aliasesStr, ok := aliasesVal.(string); ok {
+						aliasStr = aliasesStr
+					}
+					mockNodes[i][2] = fmt.Sprintf("Name: %s, Aliases: %s", name, aliasStr)
+				} else {
+					if content, ok := existingProps["content"].(string); ok {
+						mockNodes[i][2] = content
+					}
 				}
 				break
 			}
 		}
 		rows = [][]any{}
+		
+	} else if strings.HasPrefix(query, "MATCH (n) WHERE n.id =") && strings.Contains(query, "RETURN n.id") {
+		// Existence check
+		id := ""
+		if idStart := strings.Index(query, "n.id = '"); idStart != -1 {
+			idEnd := findStringEnd(query[idStart+8:])
+			if idEnd != -1 {
+				id = query[idStart+8 : idStart+8+idEnd]
+			}
+		}
+		rows = [][]any{}
+		for _, n := range mockNodes {
+			if n[0].(string) == id {
+				rows = append(rows, []any{id})
+				break
+			}
+		}
 
 	} else if strings.HasPrefix(query, "MATCH (a), (b) WHERE a.id =") {
 		// Edge creation
@@ -336,7 +405,8 @@ func parseCypherProps(propStr string) map[string]any {
 			}
 
 			if c == ',' && !inStr && !inArr {
-				props[strings.TrimSpace(currKey)] = cleanCypherVal(currVal)
+				cleanKey := strings.ToLower(strings.TrimSpace(currKey))
+				props[cleanKey] = cleanCypherVal(currVal)
 				currKey = ""
 				currVal = ""
 				inKey = true
@@ -349,7 +419,8 @@ func parseCypherProps(propStr string) map[string]any {
 		}
 	}
 	if currKey != "" {
-		props[strings.TrimSpace(currKey)] = cleanCypherVal(currVal)
+		cleanKey := strings.ToLower(strings.TrimSpace(currKey))
+		props[cleanKey] = cleanCypherVal(currVal)
 	}
 	return props
 }

@@ -174,8 +174,8 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 
 			if err != nil {
 				if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "502") || strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "504") {
-					log.Printf("\033[31mModel %s hit rate limit or server error: %s. Placed on 1 minute cooldown. Trying next...\033[0m", modelRef, err.Error())
-					c.Cooldowns[modelRef] = time.Now().Add(1 * time.Minute)
+					log.Printf("\033[31m[API FALLBACK] Model %s hit rate limit/error. Placed on 1 min cooldown. Rotating...\033[0m", modelRef)
+					c.Cooldowns[modelRef] = time.Now().Add(5 * time.Second)
 					lastErr = err.Error()
 					continue
 				}
@@ -258,6 +258,10 @@ func (c *RouterClient) GenerateAgentic(systemPrompt string, userPrompt string, t
 	return "", fmt.Errorf("agentic loop reached max steps")
 }
 
+func (c *RouterClient) CallGeminiRaw(model, systemPrompt string, history []Message) (string, error) {
+	return c.callGemini(model, systemPrompt, history)
+}
+
 func (c *RouterClient) callGemini(model, systemPrompt string, history []Message) (string, error) {
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, c.GeminiKey)
 
@@ -329,6 +333,10 @@ func (c *RouterClient) callGemini(model, systemPrompt string, history []Message)
 	}
 
 	return result.Candidates[0].Content.Parts[0].Text, nil
+}
+
+func (c *RouterClient) CallGroqRaw(model, systemPrompt string, history []Message) (string, error) {
+	return c.callGroq(model, systemPrompt, history)
 }
 
 func (c *RouterClient) callGroq(model, systemPrompt string, history []Message) (string, error) {
